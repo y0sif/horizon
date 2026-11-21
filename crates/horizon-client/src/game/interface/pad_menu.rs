@@ -1226,16 +1226,17 @@ impl Game<'_> {
     }
 
     /// Move a focused slider's handle by `by` GUI pixels (one pixel is
-    /// vanilla's arrow-key step, `value + 1 / (width - 8)`), as a click there.
+    /// vanilla's arrow-key step, `value + 1 / (width - 8)`), or by its steps
+    /// (`gamepad::slider_nudge_x`), as a click there.
     fn pad_nudge(&mut self, event_loop: &dyn EventLoopCtl, focus: Target, by: f32) {
-        let Kind::Slider { value, track } = focus.kind else {
+        let Kind::Slider { value, track, step } = focus.kind else {
             return;
         };
         let from = match self.pad.menu.nudge {
             Some((rect, x)) if rect == focus.rect => x,
             _ => gamepad::slider_x(track, value),
         };
-        let x = (from + by).clamp(track[0], track[0] + track[1]);
+        let x = gamepad::slider_nudge_x(track, from, by, step);
         self.pad.menu.nudge = Some((focus.rect, x));
         self.pad_click_at(event_loop, (x, focus.center().1), false);
     }

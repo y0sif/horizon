@@ -96,8 +96,14 @@ pub enum Kind {
     Button,
     /// Left and right move the value instead of focus; A does nothing (a
     /// click would jump the handle to the middle). `value` is 0..1 as drawn;
-    /// `track` is where a click sets 0 and the width a click spans to 1.
-    Slider { value: f32, track: [f32; 2] },
+    /// `track` is where a click sets 0 and the width a click spans to 1;
+    /// `step` is the part of the track one press moves, 0 for vanilla's pixel
+    /// (`gamepad::slider_nudge_x`).
+    Slider {
+        value: f32,
+        track: [f32; 2],
+        step: f32,
+    },
     /// A text field: A focuses it and opens an on-screen keyboard.
     Field,
     /// A list row (worlds, servers, packs, languages): A selects it.
@@ -330,7 +336,7 @@ pub fn cover_frame() {
 
 /// This frame drew a list with something to scroll, in `rect`, scrolled `amount`
 /// of `max`: a focus step goes through its hidden rows before it leaves
-/// (`gamepad::list_step`).
+/// (`gamepad::list_step`). A frame keeps its first 64.
 pub fn scroll_area(rect: [f32; 4], amount: f32, max: f32) {
     let area = ScrollArea {
         rect,
@@ -338,7 +344,11 @@ pub fn scroll_area(rect: [f32; 4], amount: f32, max: f32) {
         up: amount > 0.5,
         down: amount < max - 0.5,
     };
-    SCROLL_AREAS.with_borrow_mut(|(current, _)| current.push(area));
+    SCROLL_AREAS.with_borrow_mut(|(current, _)| {
+        if current.len() < 64 {
+            current.push(area);
+        }
+    });
 }
 
 /// The lists the last drawn frame could scroll.
@@ -1400,6 +1410,7 @@ mod tests {
         let slider = Kind::Slider {
             value: 0.25,
             track: [4.0, 142.0],
+            step: 0.0,
         };
         let mut fov = w("FOV: 70");
         fov.kind = slider;
@@ -1479,6 +1490,7 @@ mod tests {
             Kind::Slider {
                 value: 0.5,
                 track: [1.0, 3.0],
+                step: 0.0,
             },
         );
         target_as([1.0, 2.0, 0.0, 4.0], Kind::Row);

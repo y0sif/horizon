@@ -1020,7 +1020,7 @@ impl Loading {
                 Act::Nudge(sign),
                 Some(
                     focus @ Target {
-                        kind: Kind::Slider { value, track },
+                        kind: Kind::Slider { value, track, step },
                         ..
                     },
                 ),
@@ -1029,7 +1029,7 @@ impl Loading {
                     Some((rect, x)) if rect == focus.rect => x,
                     _ => horizon_client::gamepad::slider_x(track, value),
                 };
-                let x = (from + sign).clamp(track[0], track[0] + track[1]);
+                let x = horizon_client::gamepad::slider_nudge_x(track, from, sign, step);
                 self.menu.key_nudge = Some((focus.rect, x));
                 self.menu_key_click(event_loop, (x, focus.center().1));
             }

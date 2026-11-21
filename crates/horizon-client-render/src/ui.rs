@@ -740,6 +740,7 @@ pub fn slider_ext(
     let kind = crate::widgets::Kind::Slider {
         value,
         track: [x + 4.0, w - 8.0],
+        step: 0.0,
     };
     // The control socket's widget tree (`ui`): its label and value.
     crate::widgets::record_as(&label.plain(), [x, y, w, 20.0], active, kind);

@@ -1560,6 +1560,18 @@ pub fn slider_step(repeats: u32) -> f32 {
     [1.0, 1.0, 2.0, 2.0, 4.0, 4.0, 8.0][repeats.min(6) as usize]
 }
 
+/// The pointer x a nudge of a held slider clicks, kept on its `track`: `by` GUI pixels on from
+/// `from` (a held direction's [`slider_step`]), or, on a slider that moves in steps (`step` > 0,
+/// a part of the track), as many steps that way as `by` is pixels, so a press moves one and a
+/// held direction speeds up as the pixels do.
+pub fn slider_nudge_x(track: [f32; 2], from: f32, by: f32, step: f32) -> f32 {
+    if step > 0.0 && track[1] > 0.0 {
+        let value = (from - track[0]) / track[1];
+        return slider_x(track, value + step * by / slider_step(0));
+    }
+    (from + by).clamp(track[0], track[0] + track[1])
+}
+
 /// The target within `radius` of `at`, nearest first (the cursor settles
 /// onto a slot or button when the stick lets go).
 pub fn nearest(at: (f32, f32), targets: &[(f32, f32)], radius: f32) -> Option<usize> {
@@ -2494,6 +2506,18 @@ bind_key.hotbar.2:north
         assert_eq!(slider_x([14.0, 142.0], 0.0), 14.0);
         assert_eq!(slider_x([14.0, 142.0], 1.0), 156.0);
         assert!(slider_step(0) == 1.0 && slider_step(99) == 8.0);
+        // A track of 100 pixels from x 10: (from, pixels, step) to the x clicked.
+        for (row, from, by, step, x) in [
+            ("a pixel on", 30.0, 1.0, 0.0, 31.0),
+            ("pixels stop at the end", 109.0, slider_step(6), 0.0, 110.0),
+            ("one step of five values on", 35.0, 1.0, 0.25, 60.0),
+            ("one step back", 35.0, -1.0, 0.25, 10.0),
+            ("held, four steps", 10.0, slider_step(4), 0.1, 50.0),
+            ("steps stop at the end", 85.0, slider_step(2), 0.25, 110.0),
+        ] {
+            let at = slider_nudge_x([10.0, 100.0], from, by, step);
+            assert!((at - x).abs() < 1e-4, "{row}: {at}");
+        }
         assert_eq!(stick_direction([0.9, 0.2], 0.5), Some(Button::DPadRight));
         assert_eq!(stick_direction([-0.2, -0.8], 0.5), Some(Button::DPadDown));
         assert_eq!(stick_direction([0.3, 0.3], 0.5), None);

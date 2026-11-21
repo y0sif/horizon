@@ -140,6 +140,12 @@ impl DrawContext for GameDrawContext<'_, '_> {
         self.game
             .native_widget_text_field(&mut *self.surface, field)
     }
+    fn focus_target(&mut self, rect: [f32; 4], kind: FocusKind) {
+        self.game.native_focus_target(rect, kind)
+    }
+    fn scroll_area(&mut self, rect: [f32; 4], amount: f32, max: f32) {
+        self.game.native_scroll_area(rect, amount, max)
+    }
 }
 /// [`BlockEntityDrawContext`] on the game's `crate::game::native_block_entity_draw::BlockEntityDraw`.
 pub(crate) struct GameBlockEntityDrawContext<'a, 'g> {

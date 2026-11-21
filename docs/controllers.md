@@ -292,9 +292,10 @@ draws its own buttons. That is all: nothing else names the screen.
 Every control also needs a focus target, or the pad can't reach it. `ui::button` and its kin register
 themselves, as does `settings_shell::foot_button`. `graphics_style::button` and `screen_draw::button` only
 paint, so anything drawn with them, or by hand, needs its own
-`widgets::record` or `widgets::target_as`. A focus screen with any target has no crosshair, so register all
-of it. The `every_screen_has_targets` case of `tools/pad_menu_e2e.py` fails on a focus screen that
-registers nothing, unless its allowlist names it.
+`widgets::record` or `widgets::target_as` (on a mod's screen,
+[`DrawContext::focus_target`](modding/src/how-to/client/controller-focus.md)). A focus screen with any
+target has no crosshair, so register all of it. The `every_screen_has_targets` case of
+`tools/pad_menu_e2e.py` fails on a focus screen that registers nothing, unless its allowlist names it.
 
 | Action | Pad button | With the button disabled |
 |---|---|---|

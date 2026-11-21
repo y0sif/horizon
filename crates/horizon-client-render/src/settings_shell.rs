@@ -513,6 +513,7 @@ pub(crate) fn row(batch: &mut HudBatch, atlas: &HudAtlas, cols: &Columns, y: f32
         Some(value) => crate::widgets::Kind::Slider {
             value,
             track: [tx + 5.0, tw - 10.0],
+            step: 0.0,
         },
         None => crate::widgets::Kind::Button,
     };

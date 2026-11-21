@@ -2,12 +2,14 @@
 //! Client draw operations through the existing GUI drawing context.
 
 use super::Game;
+use horizon_client::widgets::{self, Kind};
 use horizon_client::{
     hud::{HudBatch, rgba},
     hud_layout::GuiDraw,
     text::Text,
 };
 use horizon_items::items::ItemStack as EngineStack;
+use mod_api::FocusKind;
 use mod_api::{TextFieldLayout, TextFieldView};
 
 impl Game<'_> {
@@ -128,6 +130,52 @@ impl Game<'_> {
     pub(super) fn is_key_down(&self, key: &str) -> bool {
         horizon_client::keybinds::key_code(key).is_some_and(|key| self.physical_keys.contains(&key))
     }
+    /// A control a mod paints itself, for a controller's focus this frame
+    /// ([`mod_api::DrawContext::focus_target`]).
+    pub(super) fn native_focus_target(&self, rect: [f32; 4], kind: FocusKind) {
+        focus_target(rect, kind);
+    }
+    /// A mod's list that scrolls, for a controller's focus this frame
+    /// ([`mod_api::DrawContext::scroll_area`]).
+    pub(super) fn native_scroll_area(&self, rect: [f32; 4], amount: f32, max: f32) {
+        scroll_area(rect, amount, max);
+    }
+}
+
+/// A mod's focus target as the engine's, registered unless the API refuses it (a rectangle
+/// `widgets::target_as` drops, a slider that can't be stepped); a slider's value and step are
+/// kept to 0..1.
+fn focus_target(rect: [f32; 4], kind: FocusKind) {
+    let kind = match kind {
+        FocusKind::Button => Kind::Button,
+        FocusKind::Row => Kind::Row,
+        FocusKind::Tab { selected } => Kind::Tab(selected),
+        FocusKind::Slider { value, track, step } => {
+            let finite = [value, track[0], track[1], step]
+                .iter()
+                .all(|v| v.is_finite());
+            if !finite || track[1] <= 0.0 || step < 0.0 {
+                return;
+            }
+            Kind::Slider {
+                value: value.clamp(0.0, 1.0),
+                track,
+                step: step.min(1.0),
+            }
+        }
+        _ => return,
+    };
+    widgets::target_as(rect, kind);
+}
+
+/// A mod's scrolling list, registered when its input is finite, its rectangle has an area and
+/// `max` isn't negative, scrolled no further than `0..=max`.
+fn scroll_area(rect: [f32; 4], amount: f32, max: f32) {
+    let finite = rect.iter().chain([&amount, &max]).all(|v| v.is_finite());
+    if !finite || rect[2] <= 0.0 || rect[3] <= 0.0 || max < 0.0 {
+        return;
+    }
+    widgets::scroll_area(rect, amount.clamp(0.0, max), max);
 }
 
 #[cfg(test)]
@@ -219,5 +267,83 @@ mod tests {
             assert!(layout.edges.windows(2).all(|w| w[0] < w[1]));
             assert!(*layout.edges.last().unwrap() <= 10.0 + 60.0 - 4.0);
         });
+    }
+
+    /// What a mod registers is what a controller's focus finds on the next frame, with the
+    /// engine's kind; a target over a button of the same rectangle takes its place.
+    #[test]
+    fn a_mods_focus_targets_and_lists_reach_the_focus() {
+        use mod_api::FocusKind as F;
+        let _ = widgets::take();
+        let at = |y| [0.0, y, 150.0, 20.0];
+        let slider = |value, step| F::Slider {
+            value,
+            track: [4.0, 142.0],
+            step,
+        };
+        let bad = |value, width, step| F::Slider {
+            value,
+            track: [4.0, width],
+            step,
+        };
+        let engine = |value, step| Kind::Slider {
+            value,
+            track: [4.0, 142.0],
+            step,
+        };
+        let kept = [
+            ("a slider", at(0.0), slider(0.5, 0.25), engine(0.5, 0.25)),
+            ("clamped", at(30.0), slider(-2.0, 3.0), engine(0.0, 1.0)),
+            ("a row", at(60.0), F::Row, Kind::Row),
+            ("tab", at(90.0), F::Tab { selected: true }, Kind::Tab(true)),
+            ("a button", at(120.0), F::Button, Kind::Button),
+            ("on a labelled button", at(150.0), F::Row, Kind::Row),
+        ];
+        let dropped = [
+            ("a NaN rectangle", [f32::NAN, 180.0, 150.0, 20.0], F::Button),
+            ("no width", [0.0, 180.0, 0.0, 20.0], F::Row),
+            ("no track", at(210.0), bad(0.5, 0.0, 0.0)),
+            ("stepping back", at(240.0), bad(0.5, 142.0, -0.1)),
+            ("a NaN value", at(270.0), bad(f32::NAN, 142.0, 0.0)),
+        ];
+        let list = |y| [0.0, y, 200.0, 100.0];
+        // (amount, max) to what the list can still scroll: (amount, up, down).
+        let lists = [
+            ("part way", list(0.0), 40.0, 100.0, (40.0, true, true)),
+            ("at the top", list(100.0), 0.0, 100.0, (0.0, false, true)),
+            ("past max", list(200.0), 150.0, 100.0, (100.0, true, false)),
+        ];
+        let refused = [
+            ("a negative max", list(300.0), 0.0, -5.0),
+            ("a NaN amount", list(400.0), f32::NAN, 100.0),
+            ("no height", [0.0, 500.0, 200.0, 0.0], 0.0, 100.0),
+        ];
+        widgets::record("Next", at(150.0), true);
+        for (_, rect, kind, _) in kept {
+            focus_target(rect, kind);
+        }
+        for (_, rect, kind) in dropped {
+            focus_target(rect, kind);
+        }
+        for (_, rect, amount, max, _) in lists {
+            scroll_area(rect, amount, max);
+        }
+        for (_, rect, amount, max) in refused {
+            scroll_area(rect, amount, max);
+        }
+        widgets::end_frame(1);
+
+        let found = super::super::key_focus::drawn_targets();
+        assert_eq!(found.len(), kept.len(), "none dropped, the button merged");
+        for (row, rect, _, want) in kept {
+            let got = found.iter().find(|t| t.rect == rect).map(|t| t.kind);
+            assert_eq!(got, Some(want), "{row}");
+        }
+        let areas = widgets::last_scroll_areas();
+        assert_eq!(areas.len(), lists.len(), "none refused");
+        for (row, rect, _, _, want) in lists {
+            let got = areas.iter().find(|a| a.rect == rect);
+            assert_eq!(got.map(|a| (a.amount, a.up, a.down)), Some(want), "{row}");
+        }
     }
 }

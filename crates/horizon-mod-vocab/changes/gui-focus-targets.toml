@@ -1,0 +1,2 @@
+ids = ["method:DrawContext::focus_target", "method:DrawContext::scroll_area", "type:FocusKind"]
+why = "A mod's screen can give a controller's focus the controls it paints itself: DrawContext::focus_target(rect, kind) with FocusKind Button, Slider (value, track and an optional step a press moves), Row or Tab, merging with a widget_button of the same rectangle, and DrawContext::scroll_area(rect, amount, max) for a list the D-pad scrolls as it walks past the rows shown. Both draw nothing and default to doing nothing."

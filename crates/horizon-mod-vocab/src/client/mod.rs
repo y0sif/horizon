@@ -19,6 +19,7 @@ pub mod extras_hud;
 #[doc(hidden)]
 pub mod first_person;
 pub(crate) mod fluid_draw;
+pub(crate) mod focus;
 // hidden: a module of game-side types; mods use their re-exports
 #[doc(hidden)]
 pub mod fog;

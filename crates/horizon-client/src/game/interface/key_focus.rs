@@ -309,6 +309,7 @@ mod tests {
             kind: Kind::Slider {
                 value: 0.5,
                 track: [4.0, 142.0],
+                step: 0.0,
             },
         }
     }
