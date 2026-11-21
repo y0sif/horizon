@@ -212,15 +212,15 @@ pub trait DrawContext {
     /// [`widget_button`](Self::widget_button) with exactly its rectangle, it merges with that
     /// button and `kind` wins. Register only what this frame shows: a list's rows in view, not
     /// those scrolled away. A rectangle that is not finite or has no area, and a slider whose
-    /// value, track or step is not finite, whose track has no width or whose step is negative,
-    /// register nothing; a slider's value and step are kept to 0..1.
+    /// value, track or step is not finite, whose track has no width or leaves `rect` or whose
+    /// step is negative, register nothing; a slider's value and step are kept to 0..1.
     fn focus_target(&mut self, rect: [f32; 4], kind: FocusKind) {}
     /// A list in `rect` (`[x, y, w, h]` in GUI pixels) that scrolls, `amount` GUI pixels from
     /// the top of `max`: draws nothing. A controller's D-pad stepping past the rows it shows
     /// ([`FocusKind::Row`]) scrolls it with the mouse wheel, as the screen's scroll hook hears
-    /// it, and goes on to the row it then draws; the right stick's scroll reaches it from
-    /// anywhere on the screen. Input that is not finite, a negative `max`, a rectangle with no
-    /// area and a 65th list in a frame register nothing; `amount` is kept to `0..=max`.
+    /// it, and goes on to the row it then draws. Input that is not finite, a negative `max`, a
+    /// rectangle with no area and a 65th list in a frame register nothing; `amount` is kept to
+    /// `0..=max`.
     fn scroll_area(&mut self, rect: [f32; 4], amount: f32, max: f32) {}
 }
 /// What a block entity, mob or player submit hook draws with, in blocks under a pose stack (`PoseStack`): one per hook call.

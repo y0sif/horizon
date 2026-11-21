@@ -143,8 +143,8 @@ impl Game<'_> {
 }
 
 /// A mod's focus target as the engine's, registered unless the API refuses it (a rectangle
-/// `widgets::target_as` drops, a slider that can't be stepped); a slider's value and step are
-/// kept to 0..1.
+/// `widgets::target_as` drops, a slider that can't be stepped or whose track leaves `rect`); a
+/// slider's value and step are kept to 0..1.
 fn focus_target(rect: [f32; 4], kind: FocusKind) {
     let kind = match kind {
         FocusKind::Button => Kind::Button,
@@ -154,7 +154,9 @@ fn focus_target(rect: [f32; 4], kind: FocusKind) {
             let finite = [value, track[0], track[1], step]
                 .iter()
                 .all(|v| v.is_finite());
-            if !finite || track[1] <= 0.0 || step < 0.0 {
+            let inside =
+                track[0] >= rect[0] - 0.5 && track[0] + track[1] <= rect[0] + rect[2] + 0.5;
+            if !finite || !inside || track[1] <= 0.0 || step < 0.0 {
                 return;
             }
             Kind::Slider {
@@ -301,10 +303,14 @@ mod tests {
         ];
         let dropped = [
             ("a NaN rectangle", [f32::NAN, 180.0, 150.0, 20.0], F::Button),
-            ("no width", [0.0, 180.0, 0.0, 20.0], F::Row),
             ("no track", at(210.0), bad(0.5, 0.0, 0.0)),
             ("stepping back", at(240.0), bad(0.5, 142.0, -0.1)),
             ("a NaN value", at(270.0), bad(f32::NAN, 142.0, 0.0)),
+            (
+                "a track relative to its rect",
+                [100.0, 300.0, 150.0, 20.0],
+                slider(0.5, 0.0),
+            ),
         ];
         let list = |y| [0.0, y, 200.0, 100.0];
         // (amount, max) to what the list can still scroll: (amount, up, down).
@@ -334,13 +340,18 @@ mod tests {
         widgets::end_frame(1);
 
         let found = super::super::key_focus::drawn_targets();
-        assert_eq!(found.len(), kept.len(), "none dropped, the button merged");
+        assert_eq!(found.len(), kept.len(), "the labelled button merged");
+        for (row, rect, _) in dropped {
+            assert!(found.iter().all(|t| t.rect[1] != rect[1]), "{row}");
+        }
         for (row, rect, _, want) in kept {
             let got = found.iter().find(|t| t.rect == rect).map(|t| t.kind);
             assert_eq!(got, Some(want), "{row}");
         }
         let areas = widgets::last_scroll_areas();
-        assert_eq!(areas.len(), lists.len(), "none refused");
+        for (row, rect, _, _) in refused {
+            assert!(areas.iter().all(|a| a.rect != rect), "{row}");
+        }
         for (row, rect, _, _, want) in lists {
             let got = areas.iter().find(|a| a.rect == rect);
             assert_eq!(got.map(|a| (a.amount, a.up, a.down)), Some(want), "{row}");
