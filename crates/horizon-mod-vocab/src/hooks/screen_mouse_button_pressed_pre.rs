@@ -20,8 +20,8 @@ pub trait Hooks {
     /// connect and loading screens, nor for a server
     /// dialog, the server pack, link and code-of-conduct prompts, a book or a
     /// sign editor drawn over gameplay, nor while a world loads or saves: the
-    /// click there stays the game's own. A gamepad click or a click the
-    /// keyboard's focus sends is not the mouse and fires nothing.
+    /// click there stays the game's own. A gamepad's click over a mod's own screen fires it as
+    /// the mouse's does; another gamepad click, or one the keyboard's focus sends, fires nothing.
     #[hook(
         side = "client",
         contract = "cancel",

@@ -579,9 +579,8 @@ it waits for A on the chat box. It types into chat (local and server), signs, bo
 every options page's fields (searches, the packs', the language list's,
 splitscreen profiles), the creative and recipe-book searches, the mod browser's search, the anvil, the
 LAN screen's port and its game rules, a server dialog's inputs, command blocks, the game master blocks'
-edit screens, Player Social's search and Debug Options' search. The one exception is a native mod's
-own screen (`Screen::Mod`), which takes its input through the screen hooks: the keyboard types nothing
-there.
+edit screens, Player Social's search, Debug Options' search and a focused text field on a native mod's
+own screen (`Screen::Mod`), whose keys and text reach the mod through its screen hooks.
 
 Done (Menu, or the keyboard's Done key) closes the keyboard, and on the way:
 

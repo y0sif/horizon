@@ -807,7 +807,8 @@ impl Game<'_> {
         self.fire_health_hud(inputs, wi, hi, draws);
     }
     /// Raw mouse button input on any screen, before dispatch; cancel skips dispatch and Post.
-    /// Button/modifiers use the same GLFW encoding as screen hooks. Synthetic clicks skip it.
+    /// Button/modifiers use the same GLFW encoding as screen hooks. Synthetic clicks skip it,
+    /// except a gamepad's over a mod's own screen.
     pub(in crate::game) fn native_mouse_button_pre(
         &mut self,
         button: i32,
@@ -1255,8 +1256,8 @@ impl Game<'_> {
     /// connect and loading screens, nor for a server
     /// dialog, the server pack, link and code-of-conduct prompts, a book or a
     /// sign editor drawn over gameplay, nor while a world loads or saves: the
-    /// click there stays the game's own. A gamepad click or a click the
-    /// keyboard's focus sends is not the mouse and fires nothing.
+    /// click there stays the game's own. A gamepad's click over a mod's own screen fires it as
+    /// the mouse's does; another gamepad click, or one the keyboard's focus sends, fires nothing.
     pub(in crate::game) fn native_screen_mouse_button_pressed_pre(
         &self,
         screen: &ScreenView<'_>,
@@ -1322,8 +1323,8 @@ impl Game<'_> {
     /// screens, nor for a server dialog, the server pack, link and
     /// code-of-conduct prompts, a book or a sign editor drawn over gameplay,
     /// nor while a world loads or saves: the scroll there stays the game's
-    /// own. A wheel a gamepad or the keyboard's focus sends is not the mouse
-    /// and fires nothing.
+    /// own. A gamepad's wheel over a mod's own screen fires it as the mouse's does; another
+    /// gamepad wheel, or one the keyboard's focus sends, fires nothing.
     pub(in crate::game) fn native_screen_mouse_scrolled_pre(
         &self,
         screen: &ScreenView<'_>,
@@ -4645,8 +4646,8 @@ impl Game<'_> {
     /// false while another screen is (or another mod's), over the title
     /// screen, a book, a sign editor, a dialog or a prompt, while the world
     /// loads, and anywhere but the window's own client (the server thread, a
-    /// dedicated server). A gamepad can close it (B, Start) but not click on
-    /// it: its clicks don't reach the mouse hooks.
+    /// dedicated server). A gamepad's clicks, wheel and drags reach the mouse hooks as the mouse's
+    /// do, B asks the Escape hook first, and the on-screen keyboard types into a focused field.
     pub(in crate::game) fn mod_screen_open(&mut self, mod_id: &str) -> bool {
         // What `screen_hooks_open` would refuse over the world: the mod's
         // screen would be up with no hook to draw or click it.

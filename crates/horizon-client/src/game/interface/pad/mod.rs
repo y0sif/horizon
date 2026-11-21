@@ -798,6 +798,10 @@ impl Game<'_> {
             self.close_book();
             return Ok(());
         }
+        // A mod's own screen hears Escape first, as from the keyboard, and may keep it.
+        if self.mod_screen().is_some() && self.screen_key_pressed(KeyCode::Escape, false) {
+            return Ok(());
+        }
         self.key_pressed(KeyCode::Escape, KeyCode::Escape)
     }
 

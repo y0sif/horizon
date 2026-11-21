@@ -95,6 +95,9 @@ impl Game<'_> {
         edit.set_scroll(field.scroll);
         edit.bordered = field.bordered;
         edit.focused = field.focused;
+        if field.focused {
+            self.pad_mod_field_drawn();
+        }
         let [a, r, g, b] = field.text_color.to_be_bytes();
         edit.text_color = rgba(r, g, b, a);
         edit.suggestion = field.suggestion.clone();

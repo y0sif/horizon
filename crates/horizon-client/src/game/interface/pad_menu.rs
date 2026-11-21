@@ -17,6 +17,9 @@
 //! of its own.
 #[path = "pad_menu/keys.rs"]
 mod keys;
+#[cfg(test)]
+#[path = "pad_menu/mod_screen_tests.rs"]
+mod mod_screen_tests;
 
 use super::event_loop::EventLoopCtl;
 use super::{Game, Screen, key_focus};
@@ -180,6 +183,12 @@ pub(super) struct MenuCursor {
     shortcut_focus: Option<Rect>,
     /// A pointer event the pad or the keyboard sends is being handled.
     pub(super) synthetic: bool,
+    /// The pad's pointer event being handled reaches the mods' mouse hooks (`pad_synthetic_event`).
+    hooks_hear: bool,
+    /// The pad's left and right presses that reached the mouse hooks: their releases are owed.
+    hooked: [bool; 2],
+    /// `widgets::generation() + 1` when a mod's screen last drew a text field with the focus.
+    mod_field_drawn: std::cell::Cell<u64>,
     /// Where the real mouse last moved the pointer (window pixels).
     real_pointer: Option<PhysicalPosition<f64>>,
     /// The screen the keyboard's focus is on (`Game::key_screen`), and the
@@ -621,24 +630,63 @@ impl Game<'_> {
 
     /// A click (press and release) at a point, the pointer staying there.
     /// A pointer event of the pad's or the keyboard's, as the window would
-    /// send it (marked, so it isn't taken for the real mouse).
+    /// send it (marked, so it isn't taken for the real mouse). Over a mod's
+    /// own screen the pad's reach the mouse hooks, and so does the release of
+    /// a press that reached them, wherever the screen has gone since.
     fn pad_synthetic_event(
         &mut self,
         event_loop: &dyn EventLoopCtl,
         id: WindowId,
         event: WindowEvent,
     ) {
+        let button = match &event {
+            WindowEvent::MouseInput {
+                state,
+                button: b @ (MouseButton::Left | MouseButton::Right),
+                ..
+            } => Some((
+                usize::from(*b == MouseButton::Right),
+                *state == ElementState::Pressed,
+            )),
+            _ => None,
+        };
+        let owed = button.is_some_and(|(i, pressed)| !pressed && self.pad.menu.hooked[i]);
+        let hear = owed
+            || (!self.pad.menu.keyboard && !self.prompt_open() && self.mod_screen().is_some());
         let was = std::mem::replace(&mut self.pad.menu.synthetic, true);
+        let heard = std::mem::replace(&mut self.pad.menu.hooks_hear, hear);
         self.handle_window_event(event_loop, id, event, super::input_trace::InputOrigin::Game);
         self.pad.menu.synthetic = was;
+        self.pad.menu.hooks_hear = heard;
+        if let Some((i, pressed)) = button {
+            self.pad.menu.hooked[i] = pressed && hear;
+        }
     }
 
     /// The event being handled is one the pad or the keyboard's focus made
-    /// up (`pad_synthetic_event`), not the window's. A controller's click or
-    /// a focused widget's is not the mouse, so the native mods' mouse hooks
-    /// skip it.
+    /// up (`pad_synthetic_event`), not the window's, and the native mods'
+    /// mouse hooks skip it: a controller's click or a focused widget's is not
+    /// the mouse, and the screens below the hooks take it. Not the pad's over
+    /// a mod's own screen, which takes its input only through the hooks.
     pub(super) fn pad_synthetic_input(&self) -> bool {
-        self.pad.menu.synthetic
+        self.pad.menu.synthetic && !self.pad.menu.hooks_hear
+    }
+
+    /// A mod's own screen drew one of its text fields with the focus, in the frame being drawn.
+    pub(super) fn pad_mod_field_drawn(&self) {
+        if self.mod_screen().is_some() {
+            self.pad
+                .menu
+                .mod_field_drawn
+                .set(widgets::generation() + 1);
+        }
+    }
+
+    /// A text field of the open mod's screen had the focus in the last drawn frame (or the one
+    /// being drawn): the on-screen keyboard types into it.
+    fn pad_mod_field_focused(&self) -> bool {
+        let at = self.pad.menu.mod_field_drawn.get();
+        self.mod_screen().is_some() && at != 0 && at >= widgets::generation()
     }
 
     fn pad_click_at(&mut self, event_loop: &dyn EventLoopCtl, at: (f32, f32), right: bool) {
@@ -2059,6 +2107,7 @@ impl Game<'_> {
         self.pad_typing()
             || self.title.is_some()
             || matches!(self.screen, Screen::Options | Screen::WorldOptions)
+            || self.pad_mod_field_focused()
     }
 
     /// Enter on these goes on to a new line: a dialog's, a sign's or a book's page.
@@ -2157,6 +2206,14 @@ impl Game<'_> {
             };
             if let Err(e) = result {
                 log::warn!("Horizon: on-screen keyboard: {e}");
+            }
+        } else if self.pad_mod_field_focused() {
+            // A mod's own screen hears its typing through the hooks, as the keyboard's.
+            match text {
+                Some(t) => self.screen_chars_typed(Some(t)),
+                None => {
+                    self.screen_key_pressed(key.expect("a key"), false);
+                }
             }
         } else if self.screen == Screen::Chat && self.title.is_none() {
             match text {

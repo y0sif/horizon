@@ -3,7 +3,8 @@
 
 pub trait Hooks {
     /// Raw mouse button input on any screen, before dispatch; cancel skips dispatch and Post.
-    /// Button/modifiers use the same GLFW encoding as screen hooks. Synthetic clicks skip it.
+    /// Button/modifiers use the same GLFW encoding as screen hooks. Synthetic clicks skip it,
+    /// except a gamepad's over a mod's own screen.
     #[hook(
         side = "client",
         contract = "cancel",

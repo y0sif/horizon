@@ -9004,7 +9004,7 @@ impl Game<'_> {
         ) {
             self.last_input = Instant::now();
         }
-        if !self.pad_synthetic_input()
+        if !self.pad.menu.synthetic
             && matches!(
                 event,
                 WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. }

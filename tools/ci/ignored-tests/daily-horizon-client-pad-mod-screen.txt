@@ -1,0 +1,2 @@
+# A controller over a native mod's own screen reaches its hooks; it needs a window and prepared resources.
+horizon-client game::pad_menu::mod_screen_tests::a_controller_reaches_a_mod_screens_hooks_as_the_mouse_and_keyboard_do lib daily resources

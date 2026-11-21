@@ -24,8 +24,8 @@ pub trait Hooks {
     /// screens, nor for a server dialog, the server pack, link and
     /// code-of-conduct prompts, a book or a sign editor drawn over gameplay,
     /// nor while a world loads or saves: the scroll there stays the game's
-    /// own. A wheel a gamepad or the keyboard's focus sends is not the mouse
-    /// and fires nothing.
+    /// own. A gamepad's wheel over a mod's own screen fires it as the mouse's does; another
+    /// gamepad wheel, or one the keyboard's focus sends, fires nothing.
     #[hook(
         side = "client",
         contract = "cancel",

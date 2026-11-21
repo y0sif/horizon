@@ -67,8 +67,8 @@ pub trait ScreensClientHost {
     /// false while another screen is (or another mod's), over the title
     /// screen, a book, a sign editor, a dialog or a prompt, while the world
     /// loads, and anywhere but the window's own client (the server thread, a
-    /// dedicated server). A gamepad can close it (B, Start) but not click on
-    /// it: its clicks don't reach the mouse hooks.
+    /// dedicated server). A gamepad's clicks, wheel and drags reach the mouse hooks as the mouse's
+    /// do, B asks the Escape hook first, and the on-screen keyboard types into a focused field.
     #[access(WorldOnly)]
     fn mod_screen_open(&mut self, mod_id: &str) -> bool;
     /// Side: client.
