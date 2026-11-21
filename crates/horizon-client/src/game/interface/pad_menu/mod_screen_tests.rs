@@ -153,7 +153,7 @@ fn a_controller_reaches_a_mod_screens_hooks_as_the_mouse_and_keyboard_do() {
             )
             .unwrap(),
     );
-    let rows: [Row; 10] = [
+    let rows: [Row; 11] = [
         (
             "the mouse's click",
             |game, _, _| {
@@ -194,13 +194,28 @@ fn a_controller_reaches_a_mod_screens_hooks_as_the_mouse_and_keyboard_do() {
             &["scroll"],
         ),
         (
-            "the keyboard focus's click",
-            |game, _, _| {
+            "Enter on the keyboard focus's button",
+            |game, _, row| {
+                let rect = [20.0, 30.0, 40.0, 20.0];
+                widgets::record("Probe", rect, true);
+                widgets::end_frame(u64::MAX);
                 game.pad.menu.keyboard = true;
-                game.pad_click_at(&NoEventLoop, (40.0, 40.0), false);
-                game.pad.menu.keyboard = false;
+                game.pad.menu.focus = Some(Target {
+                    rect,
+                    kind: Kind::Button,
+                });
+                assert!(game.key_focus_key(&NoEventLoop, KeyCode::Enter), "{row}");
             },
             &[],
+        ),
+        (
+            "the right stick, the keyboard's focus left on",
+            |game, _, row| {
+                assert!(game.pad.menu.keyboard, "{row}: left on by the row before");
+                game.pad_stick_wheel(&NoEventLoop, true, &[], [0.0, 1.0]);
+                game.pad.menu.keyboard = false;
+            },
+            &["scroll"],
         ),
         (
             "the on-screen keyboard over a focused field",
@@ -211,7 +226,10 @@ fn a_controller_reaches_a_mod_screens_hooks_as_the_mouse_and_keyboard_do() {
                 fields.set_focus(&*game, Some(id));
                 let mut draws = Draws(game, HudBatch::scratch([320, 240]));
                 fields.draw(&mut draws, &*game, [0.0, 0.0]).unwrap();
-                assert!(game.pad_has_typing_screen(), "{row}: the field is drawn focused");
+                assert!(
+                    game.pad_has_typing_screen(),
+                    "{row}: the field is drawn focused"
+                );
                 game.pad.menu.osk = Some(Keyboard::new(false, false));
                 game.pad_osk_output(osk::Output::Text("a".into()));
                 game.pad_osk_output(osk::Output::Backspace);
@@ -219,7 +237,11 @@ fn a_controller_reaches_a_mod_screens_hooks_as_the_mouse_and_keyboard_do() {
                 game.pad_osk_output(osk::Output::Done);
                 assert!(game.pad.menu.osk.is_none(), "{row}: Done closes it");
             },
-            &["char a", "key key.keyboard.backspace", "key key.keyboard.enter"],
+            &[
+                "char a",
+                "key key.keyboard.backspace",
+                "key key.keyboard.enter",
+            ],
         ),
         (
             "B, Escape kept by the screen",

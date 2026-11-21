@@ -185,6 +185,8 @@ pub(super) struct MenuCursor {
     pub(super) synthetic: bool,
     /// The pad's pointer event being handled reaches the mods' mouse hooks (`pad_synthetic_event`).
     hooks_hear: bool,
+    /// The keyboard's focus sends the pointer event being handled (`Game::key_focus_sends`).
+    key_sends: bool,
     /// The pad's left and right presses that reached the mouse hooks: their releases are owed.
     hooked: [bool; 2],
     /// `widgets::generation() + 1` when a mod's screen last drew a text field with the focus.
@@ -652,7 +654,7 @@ impl Game<'_> {
         };
         let owed = button.is_some_and(|(i, pressed)| !pressed && self.pad.menu.hooked[i]);
         let hear = owed
-            || (!self.pad.menu.keyboard && !self.prompt_open() && self.mod_screen().is_some());
+            || (!self.pad.menu.key_sends && !self.prompt_open() && self.mod_screen().is_some());
         let was = std::mem::replace(&mut self.pad.menu.synthetic, true);
         let heard = std::mem::replace(&mut self.pad.menu.hooks_hear, hear);
         self.handle_window_event(event_loop, id, event, super::input_trace::InputOrigin::Game);
@@ -675,10 +677,7 @@ impl Game<'_> {
     /// A mod's own screen drew one of its text fields with the focus, in the frame being drawn.
     pub(super) fn pad_mod_field_drawn(&self) {
         if self.mod_screen().is_some() {
-            self.pad
-                .menu
-                .mod_field_drawn
-                .set(widgets::generation() + 1);
+            self.pad.menu.mod_field_drawn.set(widgets::generation() + 1);
         }
     }
 

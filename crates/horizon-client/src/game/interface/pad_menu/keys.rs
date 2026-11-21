@@ -134,26 +134,26 @@ impl Game<'_> {
         if menu.pos.is_none() {
             menu.pos = Some(self.cursor);
         }
-        match (act, focus) {
+        self.key_focus_sends(|game| match (act, focus) {
             (Act::Focus(i), _) => {
-                self.pad_focus_on(event_loop, targets[i]);
-                self.pad.menu.slider_edit = key_focus::slider_edit_on_focus(nav);
+                game.pad_focus_on(event_loop, targets[i]);
+                game.pad.menu.slider_edit = key_focus::slider_edit_on_focus(nav);
             }
             (Act::Step(button), Some(focus)) => {
-                if !self.pad_step_value(event_loop, button, focus) {
-                    self.pad_focus_move(event_loop, button, focus, &targets);
+                if !game.pad_step_value(event_loop, button, focus) {
+                    game.pad_focus_move(event_loop, button, focus, &targets);
                 }
             }
             (Act::Press, Some(focus)) => {
-                let focus = self.pad_reveal(focus);
-                self.pad.menu.focus = Some(focus);
+                let focus = game.pad_reveal(focus);
+                game.pad.menu.focus = Some(focus);
                 // AbstractButton.keyPressed: onPress, with its click sound.
-                self.pad_click_at(event_loop, focus.center(), false);
+                game.pad_click_at(event_loop, focus.center(), false);
             }
-            (Act::ToggleSlider, _) => self.pad.menu.slider_edit = !slider_edit,
-            (Act::Nudge(sign), Some(focus)) => self.pad_nudge(event_loop, focus, sign),
+            (Act::ToggleSlider, _) => game.pad.menu.slider_edit = !slider_edit,
+            (Act::Nudge(sign), Some(focus)) => game.pad_nudge(event_loop, focus, sign),
             _ => {}
-        }
+        });
         // The narration reads a focused slider's `canChangeValue` from the
         // input type (Tab: it can, an arrow: it can't); keep them in step
         // after Enter flipped it or a click let it.
@@ -217,7 +217,7 @@ impl Game<'_> {
             self.pad.menu.key_restart = None;
             self.pad.menu.focus = None;
             if let Some(first) = self.pad_first_target(targets) {
-                self.pad_focus_on(event_loop, first);
+                self.key_focus_sends(|game| game.pad_focus_on(event_loop, first));
             }
         }
         true
@@ -245,9 +245,9 @@ impl Game<'_> {
             title.blur_field();
         }
         match target.kind {
-            Kind::Field => {
-                self.pad_click_at(event_loop, key_focus::field_click(target.rect), false);
-            }
+            Kind::Field => self.key_focus_sends(|game| {
+                game.pad_click_at(event_loop, key_focus::field_click(target.rect), false);
+            }),
             Kind::Row => {
                 let size = self.gui_size();
                 if let Some(title) = self.title.as_mut() {
@@ -333,15 +333,20 @@ impl Game<'_> {
         menu.nudge = None;
         let real = menu.real_pointer;
         if let (Some(position), Some(id)) = (real, self.window.as_ref().map(|w| w.id())) {
-            self.pad_synthetic_event(
-                event_loop,
-                id,
-                WindowEvent::CursorMoved {
-                    device_id: DeviceId::dummy(),
-                    position,
-                },
-            );
+            let moved = WindowEvent::CursorMoved {
+                device_id: DeviceId::dummy(),
+                position,
+            };
+            self.key_focus_sends(|game| game.pad_synthetic_event(event_loop, id, moved));
         }
+    }
+
+    /// The pointer events `send` makes are the keyboard focus's, whoever drives the focus when
+    /// they're handled: the mods' mouse hooks skip them (`pad_synthetic_event`).
+    fn key_focus_sends(&mut self, send: impl FnOnce(&mut Self)) {
+        let was = std::mem::replace(&mut self.pad.menu.key_sends, true);
+        send(self);
+        self.pad.menu.key_sends = was;
     }
 
     /// Each poll: what a click focused is forgotten once it is gone (the

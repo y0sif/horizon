@@ -66,9 +66,9 @@ pub trait ScreensClientHost {
     /// a single-player game (as the inventory doesn't). True when it is open:
     /// false while another screen is (or another mod's), over the title
     /// screen, a book, a sign editor, a dialog or a prompt, while the world
-    /// loads, and anywhere but the window's own client (the server thread, a
-    /// dedicated server). A gamepad's clicks, wheel and drags reach the mouse hooks as the mouse's
-    /// do, B asks the Escape hook first, and the on-screen keyboard types into a focused field.
+    /// loads, and anywhere but the window's own client (the server thread, a dedicated server). A
+    /// gamepad's clicks, wheel and drags reach the mouse hooks as the mouse's do, B and Start ask
+    /// the Escape hook first, and the on-screen keyboard types into a focused `widget_text_field`.
     #[access(WorldOnly)]
     fn mod_screen_open(&mut self, mod_id: &str) -> bool;
     /// Side: client.
