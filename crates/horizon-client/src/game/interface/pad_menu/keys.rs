@@ -343,7 +343,7 @@ impl Game<'_> {
 
     /// The pointer events `send` makes are the keyboard focus's, whoever drives the focus when
     /// they're handled: the mods' mouse hooks skip them (`pad_synthetic_event`).
-    fn key_focus_sends(&mut self, send: impl FnOnce(&mut Self)) {
+    pub(super) fn key_focus_sends(&mut self, send: impl FnOnce(&mut Self)) {
         let was = std::mem::replace(&mut self.pad.menu.key_sends, true);
         send(self);
         self.pad.menu.key_sends = was;

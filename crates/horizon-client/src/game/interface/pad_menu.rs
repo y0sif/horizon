@@ -71,6 +71,8 @@ struct Pending {
     before: Vec<Rect>,
     /// How far the list was scrolled, when it has a scrollbar.
     amount: Option<f32>,
+    /// The keyboard's focus took the step: its later scrolls are its sends too.
+    keyboard: bool,
 }
 
 /// What the focused widget is called (`widgets::slug`), found again by that when it moves: a list
@@ -1295,6 +1297,7 @@ impl Game<'_> {
                     tries: 1,
                     before: rects,
                     amount: list_amount(&areas, &focus.rect),
+                    keyboard: self.pad.menu.key_sends,
                 });
             }
             None => {}
@@ -1895,7 +1898,11 @@ impl Game<'_> {
             match step {
                 Some(i) => self.pad_focus_on(event_loop, targets[i]),
                 None if shift.is_some() && p.tries < SCROLL_TRIES => {
-                    self.pad_step_wheel(event_loop, p.button);
+                    if p.keyboard {
+                        self.key_focus_sends(|game| game.pad_step_wheel(event_loop, p.button));
+                    } else {
+                        self.pad_step_wheel(event_loop, p.button);
+                    }
                     self.pad.menu.pending = Some(Pending {
                         from,
                         generation: widgets::generation(),

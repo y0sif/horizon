@@ -153,7 +153,7 @@ fn a_controller_reaches_a_mod_screens_hooks_as_the_mouse_and_keyboard_do() {
             )
             .unwrap(),
     );
-    let rows: [Row; 11] = [
+    let rows: [Row; 12] = [
         (
             "the mouse's click",
             |game, _, _| {
@@ -216,6 +216,36 @@ fn a_controller_reaches_a_mod_screens_hooks_as_the_mouse_and_keyboard_do() {
                 game.pad.menu.keyboard = false;
             },
             &["scroll"],
+        ),
+        (
+            "the keyboard focus's step scrolling a list on, frames later",
+            |game, _, row| {
+                // Rows 20 high in a list 40 high, the one below the focus never all in view.
+                let frame = |amount: f32, n| {
+                    widgets::scroll_area([10.0, 20.0, 60.0, 40.0], amount, 30.0);
+                    for y in [30.0, 50.0] {
+                        widgets::record("Row", [20.0, y - amount, 40.0, 20.0], true);
+                    }
+                    widgets::end_frame(n);
+                };
+                frame(0.0, 1);
+                game.pad.menu.keyboard = true;
+                game.pad.menu.focus = Some(Target {
+                    rect: [20.0, 30.0, 40.0, 20.0],
+                    kind: Kind::Button,
+                });
+                assert!(
+                    game.key_focus_key(&NoEventLoop, KeyCode::ArrowDown),
+                    "{row}"
+                );
+                frame(5.0, 2);
+                frame(5.0, 3);
+                let targets = game.pad_targets();
+                game.pad_follow_focus(&NoEventLoop, &targets);
+                assert!(game.pad.menu.pending.is_some(), "{row}: scrolled again");
+                game.pad.menu.keyboard = false;
+            },
+            &[],
         ),
         (
             "the on-screen keyboard over a focused field",
