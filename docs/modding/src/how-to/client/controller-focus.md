@@ -36,5 +36,4 @@ fn screen_render_post(&self, host: &dyn ClientHost, event: &mut ScreenRenderPost
   is: round the value a click sets to the nearest step.
 - **Merging.** A target registered after a `widget_button` with exactly its rectangle replaces that button's
   target, and its kind wins: draw a tab with `widget_button`, then register it as a `Tab`.
-- **Refusals.** A rectangle that is not finite or has no area registers nothing, and so does a slider whose
-  value, track or step is not finite, whose track has no width or leaves `rect`, or whose step is negative.
+- **Refusals.** Invalid input registers nothing; the API docs of `focus_target` and `scroll_area` say which.
