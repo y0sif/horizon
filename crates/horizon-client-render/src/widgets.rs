@@ -78,6 +78,8 @@ pub fn take_cursor() -> Cursor {
 /// A labelled widget in GUI pixels (the coordinates screens take input in).
 #[derive(Clone, Debug)]
 pub struct Widget {
+    /// The screen's registered control id, independent of the drawn label.
+    pub id: Option<&'static str>,
     pub label: String,
     pub x: f32,
     pub y: f32,
@@ -429,7 +431,19 @@ pub fn record(label: &str, rect: [f32; 4], enabled: bool) {
 }
 
 /// The label of a widget of another kind (a slider's "FOV: 70", a tab).
-pub fn record_as(label: &str, [x, y, w, h]: [f32; 4], enabled: bool, kind: Kind) {
+pub fn record_as(label: &str, rect: [f32; 4], enabled: bool, kind: Kind) {
+    record_with_id(None, label, rect, enabled, kind);
+}
+
+/// Register a control with an optional agent-facing id. The id must be
+/// unique on its screen; omit it for data such as a player-named world.
+pub fn record_with_id(
+    id: Option<&'static str>,
+    label: &str,
+    [x, y, w, h]: [f32; 4],
+    enabled: bool,
+    kind: Kind,
+) {
     let label = label.trim();
     if label.is_empty() {
         return;
@@ -437,6 +451,7 @@ pub fn record_as(label: &str, [x, y, w, h]: [f32; 4], enabled: bool, kind: Kind)
     WIDGETS.with_borrow_mut(|(current, _, _)| {
         if current.len() < 512 {
             current.push(Widget {
+                id,
                 label: label.to_owned(),
                 x,
                 y,
@@ -1270,8 +1285,8 @@ impl Kind {
 /// A widget of the `ui` tree: a labelled widget and its focus target merged.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Node {
-    /// The label as a slug up to its `:` (`FOV: 70` is `fov`), `-2`, `-3`
-    /// for repeats; `<kind>-<n>` in draw order without a label.
+    /// The registered control id, or the label as a slug up to its `:`
+    /// with `-2`, `-3` for repeats; `<kind>-<n>` for unlabelled targets.
     pub id: String,
     pub kind: Kind,
     pub label: Option<String>,
@@ -1303,7 +1318,7 @@ pub fn tree(widgets: &[Widget], targets: &[Target], screen: Option<[f32; 2]>) ->
     let mut nodes: Vec<Node> = widgets
         .iter()
         .map(|w| Node {
-            id: String::new(),
+            id: w.id.unwrap_or_default().to_owned(),
             kind: w.kind,
             label: Some(w.label.clone()),
             rect: [w.x, w.y, w.w, w.h],
@@ -1331,8 +1346,14 @@ pub fn tree(widgets: &[Widget], targets: &[Target], screen: Option<[f32; 2]>) ->
             x >= -0.5 && y >= -0.5 && x + nw <= w + 0.5 && y + nh <= h + 0.5
         });
     }
-    let mut seen = std::collections::HashMap::<String, usize>::new();
-    for node in &mut nodes {
+    // A data-driven label (e.g. a world named "Create New World") must not
+    // take a registered control's id even when that label was drawn first.
+    let mut seen: std::collections::HashMap<String, usize> = nodes
+        .iter()
+        .filter(|node| !node.id.is_empty())
+        .map(|node| (node.id.clone(), 1))
+        .collect();
+    for node in nodes.iter_mut().filter(|node| node.id.is_empty()) {
         let base = node
             .label
             .as_deref()
@@ -1386,6 +1407,7 @@ mod tests {
 
     fn w(label: &str) -> Widget {
         Widget {
+            id: None,
             label: label.into(),
             x: 0.0,
             y: 0.0,
@@ -1447,6 +1469,19 @@ mod tests {
         assert_eq!(slug("Music & Sounds..."), "music-sounds");
         assert_eq!(slug("Difficulty: Normal"), "difficulty");
         assert_eq!(slug("Économie"), "économie");
+    }
+
+    #[test]
+    fn registered_ids_take_precedence_over_data_labels() {
+        let mut world = w("Create New World");
+        world.kind = Kind::Row;
+        let mut create = w("Создать новый мир");
+        create.id = Some("create-new-world");
+        create.y = 30.0;
+        let nodes = tree(&[world, create], &[], None);
+        assert_eq!(nodes[0].id, "create-new-world-2");
+        assert_eq!(nodes[1].id, "create-new-world");
+        assert_eq!(nodes[1].label.as_deref(), Some("Создать новый мир"));
     }
 
     #[test]
