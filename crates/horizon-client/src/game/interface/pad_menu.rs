@@ -2448,6 +2448,7 @@ mod tests {
     fn labelled(label: &str, rect: Rect) -> widgets::Widget {
         let [x, y, w, h] = rect;
         widgets::Widget {
+            id: None,
             label: label.to_owned(),
             x,
             y,
