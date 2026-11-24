@@ -78,6 +78,25 @@ impl Game<'_> {
     pub(super) fn connect_server_body(&mut self, address: &str, name: &str) -> Result<()> {
         self.connect_server_with_cookies(address, name, None)
     }
+    /// `QuickPlay.joinMultiplayerWorld`: `connect_server`, the connection marked as quick play's
+    /// for its disconnect screen's title (`ConnectScreen.startConnecting`'s `isQuickPlay`).
+    pub(super) fn connect_quick_play_body(&mut self, address: &str, name: &str) -> Result<()> {
+        if self.defer_world_entry(super::super::PendingWorldEntry::Server {
+            address: address.to_owned(),
+            name: name.to_owned(),
+            cookies: None,
+            lan: false,
+            realm: false,
+            quick_play: true,
+        })? {
+            return Ok(());
+        }
+        self.connect_server(address, name)?;
+        if let Some(remote) = self.remote.as_mut() {
+            remote.quick_play = true;
+        }
+        Ok(())
+    }
     /// `connect_server` carrying a transfer's stored server cookies
     /// (`TransferState`); None on an ordinary join.
     pub(super) fn connect_server_with_cookies_body(
@@ -107,6 +126,7 @@ impl Game<'_> {
             cookies: cookies.clone(),
             lan,
             realm,
+            quick_play: false,
         })? {
             return Ok(());
         }
@@ -114,6 +134,8 @@ impl Game<'_> {
         self.client_logging_out();
         if let Err(error) = self.join_server(address, name, None, cookies, lan, realm) {
             log::warn!("Horizon: could not join server: {error}");
+            // A failed transfer leaves no packs of the connection it replaced behind.
+            self.server_packs_disconnect();
             let skip = self.settings.file.bool("skipMultiplayerWarning");
             match &mut self.title {
                 Some(title) => {
@@ -180,7 +202,9 @@ impl Game<'_> {
             },
             |a| (a.name.clone(), a.uuid),
         );
-        self.server_packs_connect(local.is_none().then_some(address), user);
+        let transferred = local.is_none() && cookies.is_some();
+        self.server_packs_connect_for(local.is_none().then_some(address), user, cookies.is_some());
+        let external_server = local.is_none();
         let session = match local {
             Some(pipe) => Session::connect_local(
                 pipe,
@@ -274,7 +298,7 @@ impl Game<'_> {
         self.set_screen(Screen::Playing);
         self.hide_title();
         self.dim = Dim::Overworld;
-        self.clear_lod();
+        self.clear_lod_for_world_entry();
         self.pending_uploads.clear();
         if let Some(r) = self.renderer.as_mut() {
             r.clear_sections(self.world.layout());
@@ -309,6 +333,7 @@ impl Game<'_> {
             selector_metadata_supported: true,
             professions: self.client_professions()?,
             session,
+            external_server,
             brand: "unknown".into(),
             recipe_viewer: Default::default(),
             features: ["minecraft:vanilla".to_string()].into(),
@@ -319,15 +344,22 @@ impl Game<'_> {
             far_terrain: None,
             splash_sound: Default::default(),
             builtin,
-            status: lang
-                .get("connect.connecting")
-                .cloned()
-                .unwrap_or_else(|| "Connecting to the server...".into()),
+            status: if transferred {
+                lang.get("connect.transferring")
+                    .cloned()
+                    .unwrap_or_else(|| "Transferring to new server...".into())
+            } else {
+                lang.get("connect.connecting")
+                    .cloned()
+                    .unwrap_or_else(|| "Connecting to the server...".into())
+            },
             lang,
             registries: Arc::new(Dynamic::default()),
             tags: None,
             enchantments: None,
             joined: false,
+            transferred,
+            quick_play: false,
             reconfiguring: None,
             logged_in: false,
             entity_id: 0,
@@ -422,10 +454,12 @@ impl Game<'_> {
             seen_players: std::collections::HashSet::new(),
             glowing: Default::default(),
             own_invisible: false,
+            own_glowing: false,
             own_on_fire: false,
             own_arrows: 0,
             own_stingers: 0,
             own_shoulders: [None; 2],
+            own_pose: None,
             profile: 0,
             profile_name: String::new(),
             destroying: None,
@@ -539,7 +573,7 @@ impl Game<'_> {
         self.set_screen(Screen::Playing);
         self.title = None;
         self.dim = Dim::Overworld;
-        self.clear_lod();
+        self.clear_lod_for_world_entry();
         self.pending_uploads.clear();
         if let Some(r) = self.renderer.as_mut() {
             r.clear_sections(self.world.layout());
@@ -558,6 +592,7 @@ impl Game<'_> {
             selector_metadata_supported: true,
             professions: self.client_professions()?,
             session,
+            external_server: false,
             brand: "horizon-studio".into(),
             recipe_viewer: Default::default(),
             features: ["minecraft:vanilla".to_string()].into(),
@@ -566,13 +601,19 @@ impl Game<'_> {
             attachments: HashMap::new(),
             far_terrain: None,
             splash_sound: Default::default(),
-            builtin,
+            builtin: builtin.clone(),
             status: "Playing Studio Replay".into(),
             lang,
-            registries: Arc::new(Dynamic::default()),
+            // A recording holds no configuration phase: the clocks `SetTime` names resolve here.
+            registries: Arc::new(super::super::replay::replay_dynamic_registries(
+                &self.ui.registries.clocks,
+                &builtin,
+            )),
             tags: None,
             enchantments: None,
             joined: false,
+            transferred: false,
+            quick_play: false,
             reconfiguring: None,
             logged_in: true,
             logged_out: false,
@@ -668,11 +709,13 @@ impl Game<'_> {
             seen_players: std::collections::HashSet::new(),
             glowing: Default::default(),
             own_invisible: false,
+            own_glowing: false,
             own_on_fire: false,
             own_arrows: 0,
             own_stingers: 0,
             own_shoulders: [None; 2],
-            profile: 0,
+            own_pose: None,
+            profile: horizon_client::studio::recorder::RECORDER_UUID,
             profile_name: String::new(),
             destroying: None,
             destroying_item: None,
@@ -712,6 +755,24 @@ impl Game<'_> {
     /// Disconnect and return to the multiplayer screen (DisconnectedScreen), whose Back
     /// leads to the title after a single player world.
     pub(super) fn leave_server_body(&mut self, reason: Option<Text>) -> Result<()> {
+        self.leave_server_with(reason, false)
+    }
+
+    /// `Minecraft.disconnect` for a protocol transfer: the world and the connection go, the
+    /// server packs stay, and no screen opens because the next connection follows at once.
+    pub(super) fn leave_server_for_transfer_body(&mut self) -> Result<()> {
+        self.leave_server_with(None, true)
+    }
+
+    fn leave_server_with(&mut self, reason: Option<Text>, transferring: bool) -> Result<()> {
+        // DisconnectedScreen's title: where the connection was when it ended.
+        let ended = self.remote.as_ref().map_or_else(Default::default, |r| {
+            horizon_client::multiplayer::DisconnectTitle::after(
+                r.session.reached(),
+                r.transferred,
+                r.quick_play,
+            )
+        });
         self.interrupt_export_for_world_exit("export interrupted because the client disconnected");
         // A replay ends with the session it plays on: one that owns its session, left without
         // a reason, closes as Escape closes it, which leaves that session; otherwise the replay
@@ -735,8 +796,11 @@ impl Game<'_> {
                 self.camera_type = horizon_client::camera::CameraType::FirstPerson;
             }
         }
-        if reason.is_none() && self.integrated.as_ref().is_some_and(|s| !s.stopped()) {
-            return self.begin_closing_save(false);
+        if self.integrated.as_ref().is_some_and(|s| !s.stopped()) {
+            return match reason {
+                Some(reason) => self.begin_integrated_disconnect(reason),
+                None => self.begin_closing_save(false),
+            };
         }
         self.client_logging_out();
         self.finish_perf();
@@ -780,7 +844,11 @@ impl Game<'_> {
         }
         super::super::lan::sync::forget_sync_data();
         self.gui.atlas.clear_object_skins();
-        self.server_packs_disconnect();
+        if transferring {
+            self.server_packs_disconnect_for(true);
+        } else {
+            self.server_packs_disconnect();
+        }
         self.code_of_conduct = None;
         self.reset_tutorial();
         self.close_dialogs();
@@ -825,9 +893,13 @@ impl Game<'_> {
         self.set_screen(Screen::Playing);
         self.container = None;
         self.clear_lod();
+        self.lod_first_load = false;
         self.pending_uploads.clear();
         if let Some(r) = self.renderer.as_mut() {
             r.clear_sections(self.world.layout());
+        }
+        if transferring {
+            return Ok(());
         }
         let saves = std::env::current_dir()?.join("saves");
         let mut title = self
@@ -842,6 +914,7 @@ impl Game<'_> {
         }
         title.mode = horizon_client::title::Mode::Multiplayer(match reason {
             Some(reason) => horizon_client::multiplayer::Screen::Disconnected {
+                title: ended,
                 reason,
                 retry: None,
                 lines: std::cell::Cell::new(1),

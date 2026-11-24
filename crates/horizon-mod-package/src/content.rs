@@ -357,6 +357,89 @@ impl ShapeEntityKind {
     }
 }
 
+/// A vanilla block's shape for one entity class: each state's own vanilla shape of the
+/// same channel cut to a box, or a table of boxes by the block's vanilla state properties.
+#[derive(Clone, Debug, PartialEq)]
+pub enum VanillaShape {
+    /// `{"clip": [minX,minY,minZ,maxX,maxY,maxZ]}`, in block units.
+    Clip([f64; 6]),
+    /// A shape table, as `shapes` takes it.
+    Table(BlockShapes),
+}
+
+impl<'de> Deserialize<'de> for VanillaShape {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Clip {
+            clip: [f64; 6],
+        }
+        let value = serde_json::Value::deserialize(d)?;
+        if value.get("clip").is_some() {
+            let Clip { clip } = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+            Ok(Self::Clip(clip))
+        } else {
+            serde_json::from_value(value)
+                .map(Self::Table)
+                .map_err(serde::de::Error::custom)
+        }
+    }
+}
+
+/// Entity-context outlines and collisions for vanilla blocks
+/// (`data/<id>/horizon/vanilla_block_shapes/<name>.json`, or `mod_api::VanillaBlockShapes`
+/// from code): a mod block's `outline_context_shapes` and `collision_context_shapes`, for
+/// blocks no mod owns.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct VanillaBlockShapes {
+    /// `minecraft:<path>` block ids.
+    pub blocks: Vec<String>,
+    #[serde(default)]
+    pub outline_context_shapes: BTreeMap<ShapeEntityKind, VanillaShape>,
+    #[serde(default)]
+    pub collision_context_shapes: BTreeMap<ShapeEntityKind, VanillaShape>,
+}
+
+impl VanillaBlockShapes {
+    /// What can be checked without the vanilla registry: ids, boxes and tables. Whether each
+    /// block exists, its tables' properties and its shape being static are checked at load.
+    pub fn check(&self) -> Result<(), String> {
+        if self.blocks.is_empty() {
+            return Err("vanilla block shapes name no blocks".into());
+        }
+        let mut seen = BTreeSet::new();
+        for block in &self.blocks {
+            if !vanilla_id(block) {
+                return Err(format!("{block:?} is not a minecraft: block id"));
+            }
+            if !seen.insert(block) {
+                return Err(format!("{block} is named twice"));
+            }
+        }
+        if self.outline_context_shapes.is_empty() && self.collision_context_shapes.is_empty() {
+            return Err("vanilla block shapes declare no outline or collision".into());
+        }
+        for shape in self
+            .outline_context_shapes
+            .values()
+            .chain(self.collision_context_shapes.values())
+        {
+            match shape {
+                VanillaShape::Clip(bounds) => {
+                    if bounds.iter().any(|value| !value.is_finite())
+                        || (0..3).any(|axis| bounds[axis] > bounds[axis + 3])
+                    {
+                        return Err("clip needs a finite box with ordered bounds".into());
+                    }
+                }
+                VanillaShape::Table(table) => table.check()?,
+            }
+        }
+        Ok(())
+    }
+}
+
 /// A state property a block declares on its own, beside its template's.
 /// A block's states become the template's states times these values, so a
 /// pipe can have a connection per side without a template that has one.
@@ -393,6 +476,8 @@ fn state_name(s: &str) -> bool {
 struct BlockFile {
     template: String,
     #[serde(default)]
+    growing_plant: Option<GrowingPlant>,
+    #[serde(default)]
     properties: BlockProperties,
     shapes: Option<BlockShapes>,
     collision_shapes: Option<BlockShapes>,
@@ -414,6 +499,7 @@ struct BlockFile {
     wood_type: Option<String>,
     #[serde(default)]
     wall_block: Option<String>,
+    attachment_direction: Option<String>,
     #[serde(default)]
     sign_text_color: Option<String>,
     #[serde(default)]
@@ -447,6 +533,9 @@ pub struct Block {
     pub id: String,
     /// The vanilla block it copies, `minecraft:<path>`.
     pub template: String,
+    /// A custom growing-plant family, declared on its head block. The same
+    /// pair is used for survival checks of both the head and body blocks.
+    pub growing_plant: Option<GrowingPlant>,
     pub properties: BlockProperties,
     pub shapes: Option<BlockShapes>,
     pub collision_shapes: Option<BlockShapes>,
@@ -489,11 +578,11 @@ pub struct Block {
     /// background: `<namespace>:<path>` a mod's texture, a bare name vanilla's.
     /// The template's when unset.
     pub wood_type: Option<String>,
-    /// The block a standing or ceiling sign's item places on a wall
-    /// (`StandingAndWallBlockItem.wallBlock`): one of this mod's blocks, whose
-    /// template is the matching wall sign and which has no item. The
-    /// template's when unset.
+    /// The wall form placed by this block's item, another block of this mod.
+    /// Signs require the matching wall sign template.
     pub wall_block: Option<String>,
+    /// `"down"` for a floor or `"up"` for a ceiling; requires `wall_block`.
+    pub attachment_direction: Option<String>,
     /// A sign's new text colour (`SignBlockEntity.createDefaultSignText`): a `DyeColor` name,
     /// black when unset. Applies to a sign when it is placed, front and back.
     pub sign_text_color: Option<String>,
@@ -501,6 +590,38 @@ pub struct Block {
     pub sign_text_glow: Option<bool>,
     /// The block farmland turns into; the template's base when unset.
     pub base_block: Option<String>,
+}
+
+/// The paired blocks and vertical direction of a content growing plant.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GrowingPlant {
+    /// The declared growing-plant head block id.
+    pub head: String,
+    /// The declared growing-plant body block id.
+    pub body: String,
+    /// Direction in which the family grows.
+    pub direction: GrowingPlantDirection,
+    /// Whether the family refuses support blocks tagged `cannot_support_kelp`.
+    #[serde(default)]
+    pub kelp: bool,
+}
+
+impl GrowingPlant {
+    pub fn direction_name(&self) -> &'static str {
+        match self.direction {
+            GrowingPlantDirection::Up => "up",
+            GrowingPlantDirection::Down => "down",
+        }
+    }
+}
+
+/// The vertical direction of a growing plant.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GrowingPlantDirection {
+    Up,
+    Down,
 }
 
 #[derive(Debug, Deserialize)]
@@ -871,6 +992,8 @@ pub struct Content {
     /// Block entity types declared by native code, not content files.
     pub block_entity_types: Vec<BlockEntityType>,
     pub menu_types: Vec<MenuType>,
+    /// Entity-context shapes it gives vanilla blocks, from its files and its code.
+    pub vanilla_shapes: Vec<VanillaBlockShapes>,
     /// The namespaces it owns: the mod id, then the manifest's `namespaces`.
     pub namespaces: Vec<String>,
 }
@@ -1001,6 +1124,7 @@ impl Content {
             entity_types: Vec::new(),
             block_entity_types: Vec::new(),
             menu_types: Vec::new(),
+            vanilla_shapes: Vec::new(),
             namespaces: manifest.owned_namespaces().map(str::to_owned).collect(),
         };
         content.check(manifest, declared)?;
@@ -1021,8 +1145,19 @@ impl Content {
             entity_types: Vec::new(),
             block_entity_types: Vec::new(),
             menu_types: Vec::new(),
+            vanilla_shapes: Vec::new(),
             namespaces: vec![namespace.to_owned()],
         }
+    }
+
+    /// Adds the vanilla block shapes a mod's code declares (`vanilla_block_shapes`), checked
+    /// as declaration files are. All or nothing: on an error nothing is added.
+    pub fn declare_vanilla_shapes(&mut self, shapes: &[VanillaBlockShapes]) -> Result<(), String> {
+        for shape in shapes {
+            shape.check()?;
+        }
+        self.vanilla_shapes.extend_from_slice(shapes);
+        Ok(())
     }
 
     /// Adds blocks and items a native mod declares in code (`native_blocks`,
@@ -1068,7 +1203,8 @@ impl Content {
             }
         }
         let all: Vec<&Block> = self.blocks.iter().chain(blocks).collect();
-        check_sign_walls(&all)?;
+        check_growing_plant_pairs(&all, &self.namespaces)?;
+        check_wall_pairs(&all)?;
         for item in items {
             let id = item.id.as_str();
             if !in_own(id) {
@@ -1160,6 +1296,7 @@ impl Content {
         let mut fluids = Vec::new();
         let mut types = Vec::new();
         let mut menus = Vec::new();
+        let mut vanilla_shapes = Vec::new();
         for name in &self.files {
             let mut parts = name.splitn(3, '/');
             let (top, namespace, rest) = (
@@ -1202,9 +1339,11 @@ impl Content {
                 types.push((kind, name.clone()));
             } else if let Some(menu) = parse("menu") {
                 menus.push((menu, name.clone()));
+            } else if parse("vanilla_block_shapes").is_some() {
+                vanilla_shapes.push(name.clone());
             } else {
                 return Err(format!(
-                    "{name}: data/{id}/horizon/ holds block/, item/, mob_effect/, creative_tab/, fluid/, entity_type/ and menu/*.json only"
+                    "{name}: data/{id}/horizon/ holds block/, item/, mob_effect/, creative_tab/, fluid/, entity_type/, menu/ and vanilla_block_shapes/*.json only"
                 ));
             }
         }
@@ -1212,6 +1351,12 @@ impl Content {
         // whole index, so a reader per file made loading a big mod quadratic.
         let source = self.source.clone();
         let mut reader = reader_of(&source)?;
+        for name in vanilla_shapes {
+            let file: VanillaBlockShapes =
+                serde_json::from_slice(&reader.read(&name)?).map_err(|e| format!("{name}: {e}"))?;
+            file.check().map_err(|e| format!("{name}: {e}"))?;
+            self.vanilla_shapes.push(file);
+        }
         let mut ids = BTreeSet::new();
         for (block, name) in blocks {
             let file: BlockFile =
@@ -1228,6 +1373,7 @@ impl Content {
             let block = Block {
                 id: block,
                 template: file.template,
+                growing_plant: file.growing_plant,
                 properties: file.properties,
                 shapes: file.shapes,
                 collision_shapes: file.collision_shapes,
@@ -1249,6 +1395,7 @@ impl Content {
                 thickness: file.thickness,
                 wood_type: file.wood_type,
                 wall_block: file.wall_block,
+                attachment_direction: file.attachment_direction,
                 sign_text_color: file.sign_text_color,
                 sign_text_glow: file.sign_text_glow,
                 base_block: file.base_block,
@@ -1259,8 +1406,9 @@ impl Content {
             }
             self.blocks.push(block);
         }
+        check_growing_plant_pairs(&self.blocks.iter().collect::<Vec<_>>(), &self.namespaces)?;
         // After every block, so a wall form may be declared in a later file.
-        check_sign_walls(&self.blocks.iter().collect::<Vec<_>>())?;
+        check_wall_pairs(&self.blocks.iter().collect::<Vec<_>>())?;
         let mut remainders = Vec::new();
         for (item, name) in items {
             let file: ItemFile =
@@ -1324,9 +1472,12 @@ impl Content {
                 items: file.items,
             });
         }
+        let mut fluid_names = BTreeSet::new();
+        let mut block_ids: BTreeSet<String> = self.blocks.iter().map(|b| b.id.clone()).collect();
+        let mut item_ids: BTreeSet<String> = self.items.iter().map(|i| i.id.clone()).collect();
         for (fluid, name) in fluids {
             let file: FluidFile =
-                serde_json::from_slice(&self.file(&name)?).map_err(|e| format!("{name}: {e}"))?;
+                serde_json::from_slice(&reader.read(&name)?).map_err(|e| format!("{name}: {e}"))?;
             if file.sprite.as_deref().is_some_and(|s| !namespaced_id(s)) {
                 return Err(format!(
                     "{name}: sprite is an atlas sprite id (namespace:path)"
@@ -1341,26 +1492,27 @@ impl Content {
                 tint: file.tint,
                 world: file.world,
             };
-            if self.fluids.iter().any(|known| {
-                known.id == look.id
-                    || (known.world.is_some() && known.flowing_id() == look.id)
-                    || (look.world.is_some()
-                        && (look.flowing_id() == known.id
-                            || (known.world.is_some() && look.flowing_id() == known.flowing_id())))
-            }) {
+            // Every registry name a fluid takes: its id, and its flowing form if it flows.
+            if fluid_names.contains(&look.id)
+                || (look.world.is_some() && fluid_names.contains(&look.flowing_id()))
+            {
                 return Err(format!("{name}: fluid name declared twice"));
             }
             if let Some(block) = look.world_block() {
-                if self.blocks.iter().any(|known| known.id == block.id) {
+                if !block_ids.insert(block.id.clone()) {
                     return Err(format!("{name}: block {} is declared twice", block.id));
                 }
                 self.blocks.push(block);
             }
             if let Some(item) = look.world_bucket() {
-                if self.items.iter().any(|known| known.id == item.id) {
+                if !item_ids.insert(item.id.clone()) {
                     return Err(format!("{name}: item {} is declared twice", item.id));
                 }
                 self.items.push(item);
+            }
+            fluid_names.insert(look.id.clone());
+            if look.world.is_some() {
+                fluid_names.insert(look.flowing_id());
             }
             self.fluids.push(look);
         }
@@ -1694,6 +1846,20 @@ fn check_block(file: &Block) -> Result<(), String> {
             return Err("base_block is a block id, namespace:path".into());
         }
     }
+    if let Some(family) = &file.growing_plant {
+        if file.id != family.head {
+            return Err("growing_plant must be declared on its head block".into());
+        }
+        if !namespaced_id(&family.head) || !namespaced_id(&family.body) {
+            return Err("growing_plant head and body are namespaced block ids".into());
+        }
+        if family.head == family.body {
+            return Err("growing_plant head and body must be different blocks".into());
+        }
+        if growing_plant_body_template(&file.template).is_none() {
+            return Err("growing_plant needs a vanilla growing-plant head template".into());
+        }
+    }
     // Every vanilla `SignBlock`'s id ends in `_sign`, and no other block's does.
     let sign = file.template.ends_with("_sign");
     if let Some(wood) = &file.wood_type {
@@ -1755,8 +1921,8 @@ fn check_block(file: &Block) -> Result<(), String> {
         return Err("pick_item is an item id, namespace:path".into());
     }
     if let Some(wall) = &file.wall_block {
-        if !sign || file.template.contains("_wall_") {
-            return Err("wall_block needs a standing or ceiling sign template".into());
+        if sign && file.template.contains("_wall_") {
+            return Err("wall_block needs a standing or ceiling sign, not a wall sign".into());
         }
         if !file.item {
             return Err("wall_block is where the item places the block, and item is false".into());
@@ -1765,47 +1931,127 @@ fn check_block(file: &Block) -> Result<(), String> {
             return Err("wall_block is a block id, namespace:path".into());
         }
     }
+    if let Some(direction) = file.attachment_direction.as_deref() {
+        if file.wall_block.is_none() || !matches!(direction, "down" | "up") {
+            return Err(
+                "attachment_direction needs wall_block and must be \"down\" or \"up\"".into(),
+            );
+        }
+        if sign && (direction == "up") != file.template.ends_with("_hanging_sign") {
+            return Err("attachment_direction must match the sign template".into());
+        }
+    }
     Ok(())
 }
 
-/// A sign's `wall_block` is one of the mod's own blocks: the wall form of its
-/// kind, with no item of its own and no other sign. Checked here, a pair that
-/// doesn't fit leaves out its mod alone.
-fn check_sign_walls(blocks: &[&Block]) -> Result<(), String> {
-    let mut paired = BTreeMap::new();
-    for sign in blocks {
-        let Some(wall) = &sign.wall_block else {
+fn growing_plant_body_template(head_template: &str) -> Option<&'static str> {
+    match head_template {
+        "minecraft:kelp" => Some("minecraft:kelp_plant"),
+        "minecraft:cave_vines" => Some("minecraft:cave_vines_plant"),
+        "minecraft:twisting_vines" => Some("minecraft:twisting_vines_plant"),
+        "minecraft:weeping_vines" => Some("minecraft:weeping_vines_plant"),
+        _ => None,
+    }
+}
+
+fn check_growing_plant_pairs(blocks: &[&Block], namespaces: &[String]) -> Result<(), String> {
+    let mut body_owners = BTreeMap::new();
+    for head in blocks {
+        let Some(family) = &head.growing_plant else {
             continue;
         };
-        let id = &sign.id;
-        let form = if sign.template.ends_with("_hanging_sign") {
-            "_wall_hanging_sign"
-        } else {
-            "_wall_sign"
+        let body_is_owned = family
+            .body
+            .split_once(':')
+            .is_some_and(|(namespace, _)| namespaces.iter().any(|owned| owned == namespace));
+        if !body_is_owned {
+            return Err(format!(
+                "{}: growing_plant body {} must be one of this mod's blocks",
+                head.id, family.body
+            ));
+        }
+        if let Some(previous_head) = body_owners.insert(family.body.as_str(), head.id.as_str()) {
+            return Err(format!(
+                "{}: growing_plant body {} is already assigned to {previous_head}",
+                head.id, family.body
+            ));
+        }
+        let body = blocks
+            .iter()
+            .find(|block| block.id == family.body)
+            .ok_or_else(|| {
+                format!(
+                    "{}: growing_plant body {} is not declared",
+                    head.id, family.body
+                )
+            })?;
+        let expected_template = growing_plant_body_template(&head.template)
+            .expect("check_block validates growing_plant head templates");
+        if body.template != expected_template {
+            return Err(format!(
+                "{}: growing_plant body {} must use template {expected_template}",
+                head.id, family.body
+            ));
+        }
+        if body.item || body.block_item.is_some() || body.pick_item.is_some() {
+            return Err(format!(
+                "{}: growing_plant body {} has no item, so it sets \"item\": false and no block_item or pick_item",
+                head.id, family.body
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A wall form is owned by exactly one block item in the same mod. A wall form
+/// cannot itself be a primary form, so chains and cycles are invalid.
+fn check_wall_pairs(blocks: &[&Block]) -> Result<(), String> {
+    let mut paired = BTreeMap::new();
+    for primary in blocks {
+        let Some(wall) = &primary.wall_block else {
+            continue;
         };
+        let id = &primary.id;
+        if id == wall {
+            return Err(format!("{id}: wall_block must be a distinct block"));
+        }
         let Some(block) = blocks.iter().find(|b| b.id == *wall) else {
             return Err(format!(
                 "{id}: wall_block {wall} is not one of this mod's blocks"
             ));
         };
-        if !block.template.ends_with(form) {
+        let form = if primary.template.ends_with("_hanging_sign") {
+            Some("_wall_hanging_sign")
+        } else if primary.template.ends_with("_sign") {
+            Some("_wall_sign")
+        } else {
+            None
+        };
+        if let Some(form) = form
+            && !block.template.ends_with(form)
+        {
             return Err(format!(
                 "{id}: wall_block {wall} needs a template ending in {form}"
             ));
         }
+        if block.wall_block.is_some() {
+            return Err(format!(
+                "{id}: wall_block {wall} cannot itself declare wall_block"
+            ));
+        }
         if block.block_item.is_some() {
             return Err(format!(
-                "{id}: wall_block {wall} has this sign's item, so it declares no block_item"
+                "{id}: wall_block {wall} shares the primary block's item, so it declares no block_item"
             ));
         }
         if block.pick_item.is_some() {
             return Err(format!(
-                "{id}: wall_block {wall} picks this sign's item, so it declares no pick_item"
+                "{id}: wall_block {wall} picks the primary block's item, so it declares no pick_item"
             ));
         }
         if block.item {
             return Err(format!(
-                "{id}: wall_block {wall} has this sign's item, so its own \"item\" is false"
+                "{id}: wall_block {wall} shares the primary block's item, so its own \"item\" is false"
             ));
         }
         fn text(b: &Block) -> (&str, bool) {
@@ -1814,7 +2060,7 @@ fn check_sign_walls(blocks: &[&Block]) -> Result<(), String> {
                 b.sign_text_glow.unwrap_or(false),
             )
         }
-        if text(sign) != text(block) {
+        if form.is_some() && text(primary) != text(block) {
             return Err(format!(
                 "{id}: wall_block {wall} declares a different sign_text_color or sign_text_glow"
             ));
@@ -1979,6 +2225,62 @@ capabilities = ["registries"]
         let mut nonfinite = oversized;
         nonfinite.default = Some(vec![[f64::NAN; 6]]);
         assert!(nonfinite.check().is_err());
+    }
+
+    #[test]
+    fn vanilla_block_shapes_files_name_minecraft_blocks_and_valid_shapes() {
+        let read = |text: &str| {
+            hmod(
+                "vanilla-shapes",
+                MANIFEST_TEXT,
+                &[(
+                    "data/ruby/horizon/vanilla_block_shapes/fences.json",
+                    text.as_bytes(),
+                )],
+            )
+        };
+        let content = read(
+            r#"{"blocks":["minecraft:oak_fence","minecraft:stone_wall"],
+                "collision_context_shapes":{"player":{"clip":[0,0,0,1,1,1]},
+                  "item":{"default":[[0,0,0,1,0.5,1]]}}}"#,
+        )
+        .unwrap();
+        let [shapes] = content.vanilla_shapes.as_slice() else {
+            panic!("{:?}", content.vanilla_shapes)
+        };
+        assert_eq!(
+            shapes.blocks,
+            ["minecraft:oak_fence", "minecraft:stone_wall"]
+        );
+        assert_eq!(
+            shapes.collision_context_shapes[&ShapeEntityKind::Player],
+            VanillaShape::Clip([0.0, 0.0, 0.0, 1.0, 1.0, 1.0])
+        );
+        assert!(matches!(
+            shapes.collision_context_shapes[&ShapeEntityKind::Item],
+            VanillaShape::Table(_)
+        ));
+        for (text, refusal) in [
+            (
+                r#"{"blocks":["ruby:post"],"collision_context_shapes":{"player":{"clip":[0,0,0,1,1,1]}}}"#,
+                "is not a minecraft: block id",
+            ),
+            (
+                r#"{"blocks":["minecraft:oak_fence"],"collision_context_shapes":{"player":{"clip":[0,1,0,1,0,1]}}}"#,
+                "ordered bounds",
+            ),
+            (
+                r#"{"blocks":["minecraft:oak_fence"]}"#,
+                "no outline or collision",
+            ),
+            (
+                r#"{"blocks":["minecraft:oak_fence"],"collision_context_shapes":{"player":{"clip":[0,0,0,1,1,1],"default":[]}}}"#,
+                "unknown field",
+            ),
+        ] {
+            let error = read(text).unwrap_err();
+            assert!(error.contains(refusal), "{text}: {error}");
+        }
     }
 
     #[test]
@@ -2205,6 +2507,7 @@ capabilities = ["registries"]
             [Block {
                 id: "ruby:ruby_block".into(),
                 template: "minecraft:iron_block".into(),
+                growing_plant: None,
                 shapes: None,
                 collision_shapes: None,
                 outline_context_shapes: BTreeMap::new(),
@@ -2229,6 +2532,7 @@ capabilities = ["registries"]
                 thickness: None,
                 wood_type: None,
                 wall_block: None,
+                attachment_direction: None,
                 sign_text_color: None,
                 sign_text_glow: None,
                 base_block: None,
@@ -3145,7 +3449,17 @@ capabilities = ["registries"]
                 .contains("sign_text_glow")
         );
         for bad in [
-            r#"{"template": "minecraft:stone", "wall_block": "ruby:notice_wall"}"#,
+            r#"{"template":"minecraft:stone","attachment_direction":"up"}"#,
+            r#"{"template":"minecraft:stone","wall_block":"ruby:wall","attachment_direction":"north"}"#,
+            r#"{"template":"minecraft:oak_sign","wall_block":"ruby:wall","attachment_direction":"up"}"#,
+            r#"{"template":"minecraft:oak_hanging_sign","wall_block":"ruby:wall","attachment_direction":"down"}"#,
+        ] {
+            assert!(
+                block(bad).unwrap_err().contains("attachment_direction"),
+                "{bad}"
+            );
+        }
+        for bad in [
             r#"{"template": "minecraft:oak_wall_sign", "wall_block": "ruby:notice_wall", "item": false}"#,
             r#"{"template": "minecraft:oak_sign", "wall_block": "notice_wall"}"#,
             r#"{"template": "minecraft:oak_sign", "wall_block": ":wall"}"#,
@@ -3250,6 +3564,221 @@ capabilities = ["registries"]
         assert_eq!(content.blocks.len(), 2);
     }
 
+    #[test]
+    fn growing_plant_families_validate_their_head_and_body_pair() {
+        let family = |head: &str, body: &str| GrowingPlant {
+            head: head.into(),
+            body: body.into(),
+            direction: GrowingPlantDirection::Down,
+            kelp: false,
+        };
+        let block = |id: &str, template: &str, growing_plant: Option<GrowingPlant>| Block {
+            id: id.into(),
+            template: template.into(),
+            growing_plant,
+            ..Block::default()
+        };
+        const VALID_HEAD: &[u8] = br#"{"template":"minecraft:weeping_vines","growing_plant":{"head":"ruby:head","body":"ruby:body","direction":"down"}}"#;
+        const MISSING_BODY_HEAD: &[u8] = br#"{"template":"minecraft:weeping_vines","growing_plant":{"head":"ruby:head","body":"ruby:missing","direction":"down"}}"#;
+        const VALID_BODY: &[u8] = br#"{"template":"minecraft:weeping_vines_plant","item":false}"#;
+        const WRONG_BODY: &[u8] = br#"{"template":"minecraft:twisting_vines_plant"}"#;
+        let load = |name: &str, head: &[u8], body: Option<&[u8]>| {
+            let mut files = vec![("data/ruby/horizon/block/head.json", head)];
+            if let Some(body) = body {
+                files.push(("data/ruby/horizon/block/body.json", body));
+            }
+            hmod(name, MANIFEST_TEXT, &files)
+        };
+
+        for (invalid, message) in [
+            (
+                block(
+                    "ruby:body",
+                    "minecraft:weeping_vines_plant",
+                    Some(family("ruby:head", "ruby:body")),
+                ),
+                "declared on its head",
+            ),
+            (
+                block(
+                    "ruby:plant",
+                    "minecraft:weeping_vines",
+                    Some(family("ruby:plant", "ruby:plant")),
+                ),
+                "must be different blocks",
+            ),
+            (
+                block(
+                    "ruby:plant",
+                    "minecraft:stone",
+                    Some(family("ruby:plant", "ruby:body")),
+                ),
+                "vanilla growing-plant head template",
+            ),
+        ] {
+            assert!(check_block(&invalid).unwrap_err().contains(message));
+        }
+
+        let head = block(
+            "ruby:head",
+            "minecraft:weeping_vines",
+            Some(family("ruby:head", "ruby:body")),
+        );
+        let body = block("ruby:body", "minecraft:weeping_vines_plant", None);
+
+        let foreign_head = block(
+            "ruby:head",
+            "minecraft:weeping_vines",
+            Some(family("ruby:head", "dependency:body")),
+        );
+        let error = Content::declared("ruby")
+            .declare(&[foreign_head], &[])
+            .unwrap_err();
+        assert!(error.contains("body dependency:body must be one of this mod's blocks"));
+
+        let mut namespaced_content = Content::declared("ruby");
+        namespaced_content.namespaces.push("ruby_extra".into());
+        namespaced_content
+            .declare(
+                &[
+                    block(
+                        "ruby:head",
+                        "minecraft:weeping_vines",
+                        Some(family("ruby:head", "ruby_extra:body")),
+                    ),
+                    block("ruby_extra:body", "minecraft:weeping_vines_plant", None),
+                ],
+                &[],
+            )
+            .unwrap();
+
+        for (name, body) in [
+            {
+                let mut body = block("ruby:body", "minecraft:weeping_vines_plant", None);
+                body.item = true;
+                ("item", body)
+            },
+            {
+                let mut body = block("ruby:body", "minecraft:weeping_vines_plant", None);
+                body.block_item = Some("ruby:body_item".into());
+                ("block_item", body)
+            },
+            {
+                let mut body = block("ruby:body", "minecraft:weeping_vines_plant", None);
+                body.pick_item = Some("ruby:seed".into());
+                ("pick_item", body)
+            },
+        ] {
+            let mut content = Content::declared("ruby");
+            let error = content.declare(&[head.clone(), body], &[]).unwrap_err();
+            assert!(
+                error.contains("body ruby:body has no item"),
+                "{name}: {error}"
+            );
+        }
+
+        let mut content = Content::declared("ruby");
+        content.declare(&[head, body.clone()], &[]).unwrap();
+
+        let duplicate_head = block(
+            "ruby:other_head",
+            "minecraft:twisting_vines",
+            Some(family("ruby:other_head", "ruby:body")),
+        );
+        let error = content
+            .declare(std::slice::from_ref(&duplicate_head), &[])
+            .unwrap_err();
+        assert!(error.contains("already assigned to ruby:head"), "{error}");
+        assert_eq!(content.blocks.len(), 2, "a rejected family is not declared");
+
+        let loaded = load("growing-plant", VALID_HEAD, Some(VALID_BODY)).unwrap();
+        let loaded_head = loaded
+            .blocks
+            .iter()
+            .find(|block| block.id == "ruby:head")
+            .unwrap();
+        assert_eq!(
+            loaded_head.growing_plant.as_ref().unwrap().body,
+            "ruby:body"
+        );
+
+        let missing_body = load("growing-plant-missing-body", MISSING_BODY_HEAD, None).unwrap_err();
+        assert!(
+            missing_body.contains("body ruby:missing is not declared"),
+            "{missing_body}"
+        );
+
+        let wrong_body_template =
+            load("growing-plant-wrong-body", VALID_HEAD, Some(WRONG_BODY)).unwrap_err();
+        assert!(
+            wrong_body_template.contains("must use template minecraft:weeping_vines_plant"),
+            "{wrong_body_template}"
+        );
+    }
+
+    #[test]
+    fn a_non_sign_wall_pair_has_one_owner_and_no_other_item() {
+        let block = |id: &str, item, wall: Option<&str>| Block {
+            id: id.into(),
+            template: "minecraft:stone".into(),
+            item,
+            wall_block: wall.map(str::to_owned),
+            ..Block::default()
+        };
+        let primary = block("ruby:sconce", true, Some("ruby:wall"));
+        let wall = block("ruby:wall", false, None);
+        let check = |blocks: &[Block]| Content::declared("ruby").declare(blocks, &[]);
+        assert!(check(&[primary.clone(), wall.clone()]).is_ok());
+
+        for (pair, why) in [
+            (
+                vec![block("ruby:sconce", true, Some("ruby:sconce"))],
+                "distinct block",
+            ),
+            (
+                vec![block("ruby:sconce", true, Some("other:wall")), wall.clone()],
+                "not one of this mod's blocks",
+            ),
+            (
+                vec![
+                    primary.clone(),
+                    block("ruby:wall", true, Some("ruby:sconce")),
+                ],
+                "cannot itself declare wall_block",
+            ),
+            (
+                vec![
+                    primary.clone(),
+                    wall.clone(),
+                    block("ruby:other", true, Some("ruby:wall")),
+                ],
+                "already paired",
+            ),
+            (
+                vec![
+                    primary.clone(),
+                    Block {
+                        block_item: Some("minecraft:stick".into()),
+                        ..wall.clone()
+                    },
+                ],
+                "declares no block_item",
+            ),
+            (
+                vec![
+                    primary,
+                    Block {
+                        pick_item: Some("minecraft:stick".into()),
+                        ..wall
+                    },
+                ],
+                "declares no pick_item",
+            ),
+        ] {
+            assert!(check(&pair).unwrap_err().contains(why), "{why}");
+        }
+    }
+
     /// A creative tab: a title, an icon and its items, all item ids.
     #[test]
     fn world_fluid_generated_names_cannot_collide() {
@@ -3316,6 +3845,40 @@ capabilities = ["registries"]
         ];
         assert!(
             hmod("clashing-world-fluid", MANIFEST_TEXT, files)
+                .unwrap_err()
+                .contains("declared twice")
+        );
+    }
+
+    #[test]
+    fn many_fluids_load_and_a_flowing_name_taken_by_an_earlier_fluid_is_refused() {
+        let names: Vec<String> = (0..300)
+            .map(|i| format!("data/ruby/horizon/fluid/f{i}.json"))
+            .collect();
+        let files: Vec<(&str, &[u8])> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                (
+                    n.as_str(),
+                    if i % 2 == 0 {
+                        &b"{}"[..]
+                    } else {
+                        br#"{"world":{}}"#
+                    },
+                )
+            })
+            .collect();
+        let content = hmod("many-fluids", MANIFEST_TEXT, &files).unwrap();
+        assert_eq!(content.fluids.len(), 300);
+        assert_eq!(content.blocks.len(), 150);
+        // `a` flows into `flowing_a`, which a later file may not declare.
+        let files: &[(&str, &[u8])] = &[
+            ("data/ruby/horizon/fluid/a.json", br#"{"world":{}}"#),
+            ("data/ruby/horizon/fluid/flowing_a.json", b"{}"),
+        ];
+        assert!(
+            hmod("flowing-taken", MANIFEST_TEXT, files)
                 .unwrap_err()
                 .contains("declared twice")
         );

@@ -2431,6 +2431,7 @@ fn a_button_label_wider_than_its_button_stays_inside_it() {
         label: "Create Backup and Load the World Anyway".into(),
         enabled: true,
         id: 40,
+        agent_id: None,
         icon: None,
         trailing: None,
         action: None,
@@ -2647,6 +2648,7 @@ mod text_and_icon {
             label: label.into(),
             enabled: true,
             id: 0,
+            agent_id: None,
             icon: None,
             trailing: icon,
             action: None,
@@ -2846,6 +2848,7 @@ fn the_multiplayer_screens_have_their_own_ids() {
     );
     assert_eq!(
         M::Disconnected {
+            title: Default::default(),
             reason: Text::empty(),
             retry: None,
             lines: std::cell::Cell::new(1),
