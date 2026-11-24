@@ -26,7 +26,9 @@ pub use models::{
     SlotContext, SlotRules, SlotView, StackedOnOther,
 };
 mod slot_context;
-pub use slot_context::{SlotSnapshot, apply_menu_slot_rules, lan_container};
+pub use slot_context::{
+    SlotSnapshot, apply_menu_slot_pickup, apply_menu_slot_rules, lan_container,
+};
 use std::sync::Arc;
 
 mod bundle;
@@ -436,6 +438,8 @@ const RESULT: usize = 3;
 /// `Container.getMaxStackSize`.
 const CONTAINER_MAX: u32 = 99;
 const OFFHAND: usize = 40;
+/// `menu_slot_pickup`'s key for the player's own inventory menu (`Kind::Inventory`) only.
+pub const PLAYER_INVENTORY_MENU: &str = "horizon:player_inventory";
 
 pub struct Menu {
     state: storage::State,
@@ -1688,6 +1692,24 @@ impl Menu {
     }
 
     fn may_pickup(&self, env: &Env, s: usize) -> bool {
+        self.vanilla_may_pickup(env, s) && self.parts_may_pickup(env, s)
+    }
+
+    /// The parts' `menu_slot_pickup` for the stack slot `s` holds. The player's own inventory
+    /// menu is asked as `PLAYER_INVENTORY_MENU`; an empty slot, and any other menu with no
+    /// registered type (the creative picker), are not asked.
+    fn parts_may_pickup(&self, env: &Env, s: usize) -> bool {
+        let id = self
+            .registry_id()
+            .or((self.state.kind == Kind::Inventory).then_some(PLAYER_INVENTORY_MENU));
+        let (Some(id), Some(stack)) = (id, self.slot(s)) else {
+            return true;
+        };
+        let index = self.state.slots[s].index;
+        apply_menu_slot_pickup(env.slot_rules, id, index, stack, self.slot_context(env, s))
+    }
+
+    fn vanilla_may_pickup(&self, env: &Env, s: usize) -> bool {
         match self.state.slots[s].role {
             Role::Inert | Role::Hidden => false,
             Role::CraftResult => self.crafting_result_is_current(env, s),

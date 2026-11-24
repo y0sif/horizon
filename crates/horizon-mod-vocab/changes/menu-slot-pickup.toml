@@ -1,0 +1,3 @@
+ids = ["hook:menu_slot_pickup", "method:MenuPart::menu_slot_pickup", "type:MenuSlotPickupEvent"]
+why = "A menu type's part can refuse a take: menu_slot_pickup is vanilla's Slot.mayPickup for registered vanilla and mod menus, asked beside menu_slot_rules with the same menu, slot, container and context, for the stack the slot holds. A refused slot keeps its stack under a pickup, a quick move, a swap and a throw, and a double-click collect skips it. The player's own inventory menu is asked too, on the reserved id horizon:player_inventory, which menu_slot_rules does not use. menu_slot_rules is unchanged and stays at version 4."
+migrate = "Nothing to change: additive. A part implements MenuPart::menu_slot_pickup and sets event.may_pickup = false to keep a stack in its slot."

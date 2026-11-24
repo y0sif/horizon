@@ -43,6 +43,42 @@ disconnecting discards it. Reads allocate nothing and do not rescan recipes or r
 Parts that read `context.setting(..)` or `side()` have no counterpart on the Host.
 Named injections for `menu_slot_rules` request `hook_version = 4`.
 
+### Refusing a take
+
+`menu_slot_pickup` is the same part's answer to vanilla's `Slot.mayPickup`: whether a slot gives up the
+stack it holds. It is asked for the same menu types with the same `slot`, `container` and `context`, and
+`event.stack` is the stack in the slot. `event.may_pickup` arrives `true`; set it `false` and a pickup, a
+shift-click, a number-key or offhand swap and a throw leave the stack where it is, and a double-click
+collect skips that slot and takes from the others. A slot that already refuses on its own (a crafting
+result that is no longer current, an anvil's unpaid cost, a trade not met, bound armour) is not asked, so
+a part can refuse a take but not allow one. `menu.slot_gives(host, slot)` follows the answer too.
+
+```rust,ignore
+fn menu_slot_pickup(&self, host: &dyn mod_api::Host, event: &mut mod_api::MenuSlotPickupEvent<'_>) {
+    // Keep a locked item in every slot of the container itself, result slots included.
+    if event.container != mod_api::MenuContainer::Player && locked(host, event.context.player, event.stack) {
+        event.may_pickup = false;
+    }
+}
+```
+
+Inside a container's menu the player's inventory slots are asked with `MenuContainer::Player`. The
+server's answer stands: answer the same on both sides, or the client's prediction is corrected by the
+resync.
+
+The player's own inventory menu has no registered type. A part registered on the reserved id
+`horizon:player_inventory` is asked `menu_slot_pickup` for it, with `context.pos` `None` and these slots.
+`menu_slot_rules` is not asked for this id, and the creative item picker is asked neither.
+
+| Slots | `container` | `slot` |
+|---|---|---|
+| Crafting result | `Result` | 0 |
+| 2x2 crafting grid | `Grid` | 0-3 |
+| Armour, head to feet | `Player` | 39, 38, 37, 36 |
+| Main inventory | `Player` | 9-35 |
+| Hotbar | `Player` | 0-8 |
+| Offhand | `Player` | 40 |
+
 ### Who and where: the slot's context
 
 A rule that depends on more than the stack reads `event.context`, a `MenuSlotContext` the game

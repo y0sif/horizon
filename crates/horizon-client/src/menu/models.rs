@@ -72,6 +72,21 @@ pub trait SlotRules {
         may_place: &mut bool,
         max_stack: &mut u32,
     );
+    /// Whether a part answers `menu_slot_pickup` for the menu type `menu`.
+    fn listens_pickup(&self, _menu: &str) -> bool {
+        false
+    }
+    /// `menu_slot_pickup`: whether the slot gives up `stack`, the stack it holds. `may_pickup`
+    /// arrives `true`; the parts may refuse.
+    fn pickup(
+        &self,
+        _menu: &str,
+        _slot: usize,
+        _stack: &ItemStack,
+        _context: SlotContext<'_>,
+        _may_pickup: &mut bool,
+    ) {
+    }
 }
 
 /// What `AnvilUpdateEvent` asks about once `createResult` made vanilla's

@@ -864,7 +864,8 @@ Fabric evidence is at `fabric-26.3/` pinned `2065040b236a0d5ac011bd6a45625dc4957
 sites are named by function. Scope: the twelve `base` hooks `screen_key_released_pre`, `music`,
 `music_layers`, `input_key`, `mouse_scrolling`, `screen_mouse_dragged_pre`, `mod_container_viewers`,
 `living_knockback`, `experience_orb_can_merge`, `experience_orb_merge`, `menu_slot_rules` and
-`living_entity_use_item_tick`. All twelve record a gap; no keys are added.
+`living_entity_use_item_tick`, and `menu_slot_pickup` beside `menu_slot_rules`. All thirteen record a
+gap; no keys are added.
 
 | Horizon hook | Fabric event considered / status | Evidence and porting boundary |
 |---|---|---|
@@ -879,6 +880,7 @@ sites are named by function. Scope: the twelve `base` hooks `screen_key_released
 | `experience_orb_can_merge` | **Gap:** none | Fabric API 26.3 declares no experience-orb event; the pinned index lists none. Horizon's `native_experience_orb_can_merge` is fired by `orb_merges` for each candidate pair from `ExperienceOrb.tryMergeToExisting` and the periodic scan, with the dimension, both orb ids and values, and vanilla's merge answer. No Fabric event fires at that query: gap. No key. |
 | `experience_orb_merge` | **Gap:** none | Fabric API 26.3 declares no experience-orb merge event; the pinned index lists none. Horizon's `native_experience_orb_merge` is fired by `orb_merges` after the merge was allowed and before one orb absorbs the other, with the dimension, both orb ids, both orbs' values and counts and a cancel. No Fabric event fires at that absorption: gap. No key. |
 | `menu_slot_rules` | **Gap:** none | Fabric API 26.3 declares no slot-placement or stack-limit event; the pinned index lists nothing for `Slot.mayPlace` or `mayPickup`. Horizon's `native_menu_slot_rules` is called by `apply_menu_slot_rules` with the loop context, menu name, backing slot index, stack, and mutable placement and maximum, on both the server and client prediction. No Fabric event fires at that query or carries the menu context: gap. No key. |
+| `menu_slot_pickup` | **Gap:** none | Fabric API 26.3 declares no event for `Slot.mayPickup` either (the same pinned index); a Fabric mod mixes into `Slot`. Horizon's `native_menu_slot_pickup` is called by `apply_menu_slot_pickup` with the menu name, backing slot index, the stack the slot holds, the menu context and a mutable answer, wherever a click asks the slot whether it gives its stack up, on both the server and client prediction: gap. No key. |
 | `living_entity_use_item_tick` | **Gap:** none (nearest `UseItemCallback`, a different moment) | [Fabric's item-use callback][use-item-api] lines 27-53 handles an attempted use with player, level and hand and an `InteractionResult`; [the server interaction mixin][interaction-server] lines 96-104 fires it at `ServerPlayerGameMode.useItem` HEAD, not on each tick of `LivingEntity.updatingUsingItem`. The pinned index lists no item-use tick event. Horizon's `native_living_entity_use_item_tick` is fired by `use_item_ticked` every tick of a use with the stack, hand, remaining duration and a cancel. No Fabric event fires at that tick or carries the duration: gap. No key. |
 ## Event counterparts: base item use, client levels, projectiles, mounts, interaction, maps and data (arismoko/horizon#1014)
 

@@ -691,7 +691,28 @@ impl View<'_> {
         {
             return false;
         }
-        stack.is_none_or(|s| rules.may_pickup(i, s))
+        stack.is_none_or(|s| rules.may_pickup(i, s) && self.parts_may_pickup(i, s, rules))
+    }
+    /// The parts' `menu_slot_pickup` for `stack` in menu slot `i` of the guest's open container.
+    /// The guest's own inventory menu (window 0) is not asked here: its clicks run through
+    /// `Menu`, which asks as `PLAYER_INVENTORY_MENU`.
+    fn parts_may_pickup(&self, i: usize, stack: &ItemStack, rules: &dyn Rules) -> bool {
+        let Some(menu) = self
+            .guest
+            .menu
+            .as_ref()
+            .filter(|_| self.container.is_some())
+        else {
+            return true;
+        };
+        let (index, context) = self.slot_context(i);
+        crate::menu::apply_menu_slot_pickup(
+            rules.slot_rules(),
+            &menu.registry_id,
+            index,
+            stack,
+            context,
+        )
     }
     /// The ranges quick move uses: (container start..end, main, hotbar).
     fn player_ranges(&self) -> (std::ops::Range<usize>, std::ops::Range<usize>) {

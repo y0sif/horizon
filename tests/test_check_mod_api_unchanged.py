@@ -333,6 +333,11 @@ class CompareTests(unittest.TestCase):
                     'let mut p1 = crate::__wire_record_858(p1_0);\n let answer = receiver.dragon_fight_won(&host, '
                     '&mut p1); out.put_owned(answer); out.put(&p1.level); }\n')
 
+    # A Part method's arm (#19474's `menu_slot_pickup`): its receiver is the part's handler, not the mod's `Hooks`.
+    PART_ARM = ('534749878 => { let receiver = crate::wire::guest::handler::<dyn crate :: MenuPart>(input.take()?)?; '
+                'let p1_0: i32 = input.take()?;\nlet mut p1 = crate::__wire_record_858(p1_0);\n let answer = '
+                'receiver.dragon_fight_won(&host, &mut p1); out.put_owned(answer); out.put(&p1.level); }\n')
+
     def compare_hook_addition(self, head_records, added_arm, edit=lambda text: text):
         """The gate's status for the base's dispatch against one with `added_arm` and `head_records`."""
         old_hook = {"name": "dimension_transition_screen_draw", "neoforge": "none"}
@@ -346,6 +351,9 @@ class CompareTests(unittest.TestCase):
     def test_an_added_hook_with_a_borrowed_event_passes(self):
         # #17989's case: the new arm names its own record, and the later ones move up by one.
         self.assertEqual(self.compare_hook_addition((857, 859, 863, 862), self.BORROWED_ARM), 0)
+
+    def test_an_added_part_method_passes(self):
+        self.assertEqual(self.compare_hook_addition((857, 859, 863, 862), self.PART_ARM), 0)
 
     def test_an_added_hook_with_an_owned_event_passes(self):
         # #18539's case: the number the event took is named nowhere, yet the later records are one higher.

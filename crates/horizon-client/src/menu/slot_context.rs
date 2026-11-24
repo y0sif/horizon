@@ -115,3 +115,20 @@ pub fn apply_menu_slot_rules(
     }
     (may_place, max_stack.clamp(1, CONTAINER_MAX).min(item_max))
 }
+
+/// Ask the scoped `menu_slot_pickup` whether a slot gives up `stack`, the stack it holds. `menu`
+/// is the menu type, or `PLAYER_INVENTORY_MENU` for the player's own inventory menu. Only a menu
+/// a part answers is asked; with no rules lent the slot gives it up.
+pub fn apply_menu_slot_pickup(
+    rules: Option<&dyn SlotRules>,
+    menu: &str,
+    slot: usize,
+    stack: &ItemStack,
+    context: SlotContext<'_>,
+) -> bool {
+    let mut may_pickup = true;
+    if let Some(rules) = rules.filter(|rules| rules.listens_pickup(menu)) {
+        rules.pickup(menu, slot, stack, context, &mut may_pickup);
+    }
+    may_pickup
+}
