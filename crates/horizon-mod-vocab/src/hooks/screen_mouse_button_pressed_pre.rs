@@ -17,11 +17,11 @@ pub trait Hooks {
     /// and the pack list opened from the title screen count, with no player
     /// and no `menu`; the title's own screens, their
     /// `screen.id` from the title state machine). It does not fire on the
-    /// connect and loading screens, nor for a server
-    /// dialog, the server pack, link and code-of-conduct prompts, a book or a
-    /// sign editor drawn over gameplay, nor while a world loads or saves: the
-    /// click there stays the game's own. A gamepad's click over a mod's own screen fires it as
-    /// the mouse's does; another gamepad click, or one the keyboard's focus sends, fires nothing.
+    /// connect and loading screens, nor for server dialogs or prompts.
+    /// It does fire for the active book or sign editor. Controller and keyboard
+    /// focus clicks are only reported when routed to an editor overlay; a
+    /// gamepad's click also fires it over a mod's own screen, where a
+    /// keyboard-focus click does not.
     #[hook(
         side = "client",
         contract = "cancel",

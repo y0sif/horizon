@@ -742,7 +742,52 @@ pub(crate) fn load_tag_lists(
             raw.entry(id.to_owned()).or_default().push(&v);
         }
     }
-    Ok(TagLayers::resolve_all(raw))
+    let known = frozen_registry_ids(root, kind);
+    Ok(TagLayers::resolve_all(raw, |id| {
+        known.as_ref().is_none_or(|ids| ids.contains(id))
+    }))
+}
+/// The ids of the built-in registry `kind`'s tags name, which a tag's
+/// elements are checked against (`ElementLookup.fromFrozenRegistry`): the
+/// blocks, items and fluids of `command-registries.json`, which content mods'
+/// join, and the entity types of `entity-types.json`, which holds the mods'
+/// too. None for a data-driven registry, or a root without the export: then
+/// every element is taken.
+fn frozen_registry_ids(root: &Path, kind: &str) -> Option<HashSet<String>> {
+    let qualify = |id: &str| {
+        if id.contains(':') {
+            id.to_owned()
+        } else {
+            format!("minecraft:{id}")
+        }
+    };
+    if kind == "entity_type"
+        && let Ok(bytes) = fs::read(root.join("entity-types.json"))
+    {
+        let rows: HashMap<String, serde::de::IgnoredAny> = serde_json::from_slice(&bytes)
+            .inspect_err(|e| log::warn!("Horizon: entity-types.json is unreadable: {e}"))
+            .ok()?;
+        return Some(rows.keys().map(|id| qualify(id)).collect());
+    }
+    if !matches!(kind, "block" | "item" | "fluid" | "entity_type") {
+        return None;
+    }
+    #[derive(serde::Deserialize)]
+    struct Export<'a> {
+        #[serde(borrow, default)]
+        by_registry: HashMap<String, &'a serde_json::value::RawValue>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Ids {
+        ids: Vec<String>,
+    }
+    let bytes = fs::read(root.join("command-registries.json")).ok()?;
+    let export: Export = serde_json::from_slice(&bytes)
+        .inspect_err(|e| log::warn!("Horizon: command-registries.json is unreadable: {e}"))
+        .ok()?;
+    let ids: Ids =
+        serde_json::from_str(export.by_registry.get(&format!("minecraft:{kind}"))?.get()).ok()?;
+    Some(ids.ids.iter().map(|id| qualify(id)).collect())
 }
 /// An entity type id or `#tag` as the set of entity type ids it names.
 fn entity_spec(tags: &HashMap<String, HashSet<String>>, spec: &str) -> HashSet<String> {
@@ -2216,6 +2261,25 @@ impl<R: RandomSource> LootContext<'_, R> {
                 min + random.next_int_bound(max - min + 1).unwrap_or(0)
             };
         }
+        // An int provider's constant goes through Codec.INT, which takes
+        // `Number.intValue`: 2.5 is 2 and -2.5 is -2, not rounded.
+        let constant = match v {
+            Value::Object(o)
+                if o.get("type").and_then(Value::as_str) == Some("minecraft:constant") =>
+            {
+                o.get("value").unwrap_or(&Value::Null)
+            }
+            _ => v,
+        };
+        if let Value::Number(n) = constant {
+            // `intValue` keeps the low 32 bits of the integer (a decimal is
+            // cut toward zero first); f64 holds that integer exactly up to 2^53.
+            return match (n.as_i64(), n.as_u64()) {
+                (Some(i), _) => i as i32,
+                (_, Some(u)) => u as i32,
+                _ => (n.as_f64().unwrap_or(0.0).trunc() as i128) as i32,
+            };
+        }
         Self::number(v, random).round() as i32
     }
     fn condition(&self, c: &Value, random: &mut R) -> bool {
@@ -2700,7 +2764,9 @@ impl<R: RandomSource> LootContext<'_, R> {
                     if level > 0 {
                         let add = level as f32 * Self::number(&f["count"], random);
                         // ItemStack.grow: an int sum, which wraps as in Java.
-                        let count = (stack.count as i32).wrapping_add(add.round() as i32);
+                        // Math.round(float): ties go up, so -1.5 adds -1.
+                        let add = horizon_core::jmath::round_f32(add);
+                        let count = (stack.count as i32).wrapping_add(add);
                         stack.count = count.max(0) as u32;
                         if let Some(limit) = f["limit"].as_i64().filter(|l| *l > 0) {
                             stack.count = stack.count.min(limit as u32);
