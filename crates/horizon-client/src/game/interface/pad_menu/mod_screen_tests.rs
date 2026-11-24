@@ -105,7 +105,8 @@ impl EventLoopCtl for NoEventLoop {
 struct Draws<'a, 'g>(&'a Game<'g>, HudBatch);
 impl mod_api::DrawContext for Draws<'_, '_> {
     fn widget_text_field(&mut self, field: &TextFieldView) -> TextFieldLayout {
-        self.0.native_widget_text_field(&mut self.1, field)
+        self.0
+            .native_widget_text_field(&mut self.1, field, field.rect)
     }
 }
 
