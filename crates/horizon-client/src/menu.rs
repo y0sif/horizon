@@ -879,6 +879,8 @@ impl Menu {
                 item_smithed_hook: false,
                 item_smithed: Vec::new(),
                 output_removed: 0,
+                result_made: false,
+                hook_result: false,
                 equipped: Vec::new(),
                 merchant: None,
                 stone: Stonecutter::default(),
@@ -2068,6 +2070,41 @@ impl Menu {
                 Some(stack)
             });
         self.state.containers[RESULT][0] = result;
+        self.state.result_made = true;
+        self.state.hook_result = false;
+    }
+
+    /// Whether the crafting result was made again from the grid since this was last asked: the
+    /// moment a server caller has the mods' say on it (`prepare_item_craft_result`).
+    pub fn take_result_made(&mut self) -> bool {
+        std::mem::take(&mut self.state.result_made)
+    }
+
+    /// Whether the crafting result shown is the mods' (`set_hook_result`).
+    pub fn result_is_hooks(&self) -> bool {
+        self.state.hook_result
+    }
+
+    /// The result a server caller kept for the grid as it stands (the mods' when `hook`), put
+    /// back in result slot `slot` after the grid was loaded: it was not made again, so the
+    /// mods are not asked about it again.
+    pub fn restore_result(
+        &mut self,
+        env: &Env,
+        slot: usize,
+        result: Option<ItemStack>,
+        hook: bool,
+    ) {
+        self.set_slot(env, slot, result);
+        self.state.result_made = false;
+        self.state.hook_result = hook;
+    }
+
+    /// The mods' crafting result for the grid as it stands, in result slot `slot`: shown and
+    /// taken in place of the recipe's until the result is made again.
+    pub fn set_hook_result(&mut self, env: &Env, slot: usize, result: Option<ItemStack>) {
+        self.set_slot(env, slot, result);
+        self.state.hook_result = true;
     }
 
     /// `FurnaceResultSlot.checkTakeAchievements`: what `carried` and

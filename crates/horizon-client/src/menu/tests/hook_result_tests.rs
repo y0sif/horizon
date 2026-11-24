@@ -79,3 +79,36 @@ fn a_hook_result_take_uses_up_the_grid_and_its_remainders() {
         }
     });
 }
+
+/// A result the mods set in place of the recipe's (`prepare_item_craft_result`) is current
+/// while the grid stands, also where a mod's crafting recipes make every take check the result
+/// against the recipe's. Its take uses up the grid, and the result made from what is left is
+/// the recipe's again, for the mods to be asked about.
+#[test]
+fn a_replaced_result_is_taken_while_mod_recipes_are_loaded() {
+    crate::crafting::mod_kinds::tests::with_recipe(0, |recipes, _| {
+        bare_env(|base| {
+            let env = Env {
+                recipes: &recipes,
+                ..*base
+            };
+            let diamond = ItemStack::new("minecraft:diamond", 1);
+            for kind in [Kind::Crafting, mod_crafting_table()] {
+                let mut menu = Menu::new(kind);
+                menu.set_slot(&env, 1, Some(ItemStack::new("test:input", 2)));
+                assert!(menu.take_result_made());
+                // A stack that is neither the recipe's nor marked as the mods' is not taken.
+                menu.set_slot(&env, 0, Some(diamond.clone()));
+                menu.click(&env, 0, 0, Input::Pickup).unwrap();
+                assert!(menu.carried.is_none());
+                menu.set_hook_result(&env, 0, Some(diamond.clone()));
+                assert!(!menu.take_result_made(), "setting the result made nothing");
+                menu.click(&env, 0, 0, Input::Pickup).unwrap();
+                assert_eq!(menu.carried, Some(diamond.clone()));
+                assert_ne!(menu.slot(1), Some(&ItemStack::new("test:input", 2)));
+                assert!(menu.take_result_made());
+                assert!(!menu.result_is_hooks());
+            }
+        });
+    });
+}

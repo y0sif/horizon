@@ -322,9 +322,13 @@ impl Game<'_> {
             .recipes()
             .find(&self.loop_context, &g.craft_grid, 2)
             .map(|(_, stack)| stack);
+        let recipe = result.clone();
+        let (name, inputs) = (g.name.clone(), g.craft_grid.to_vec());
         if mod_api::__private::listened(mod_api::HookId::PrepareItemCraft) {
-            let name = g.name.clone();
             self.native_prepare_item_craft(uuid, &name, None, &mut result);
+        }
+        if mod_api::__private::listened(mod_api::HookId::PrepareItemCraftResult) {
+            self.native_prepare_item_craft_result(uuid, &name, None, &inputs, &mut result);
         }
         let Some(host) = self.lan.as_mut() else {
             return;
@@ -341,11 +345,67 @@ impl Game<'_> {
             .get_mut(&conn)
             .and_then(|p| p.crafting.inventory.take());
         if let Some(mut menu) = menu {
-            menu.set_slot(&self.menu_env(), 0, result);
+            // The menu's own grid is written again by the next click, which asks again.
+            if result == recipe {
+                menu.set_slot(&self.menu_env(), 0, result);
+            } else {
+                menu.set_hook_result(&self.menu_env(), 0, result);
+            }
             if let Some(play) = self.lan.as_mut().and_then(|host| host.menus.get_mut(&conn)) {
                 *play.crafting.inventory = Some(menu);
             }
         }
+    }
+
+    /// The mods' say on the crafting result guest `gi`'s `menu` shows in `slot`, once the menu
+    /// engine ran: `prepare_item_craft` as after every click, then `prepare_item_craft_result`
+    /// when the result was made again from the grid (cells `grid`) or the first hook changed
+    /// it. A changed result goes into the menu as the mods'. Whether they changed it.
+    fn lan_prepare_craft_result(
+        &mut self,
+        gi: usize,
+        pos: Option<[i32; 3]>,
+        menu: &mut Menu,
+        slot: usize,
+        grid: std::ops::Range<usize>,
+    ) -> bool {
+        let made = menu.take_result_made();
+        let Some(guest) = self.lan.as_ref().map(|host| &host.hub.guests[gi]) else {
+            return false;
+        };
+        let (uuid, name) = (guest.uuid, guest.name.clone());
+        let shown = menu.slot(slot).cloned();
+        let mut result = shown.clone();
+        self.native_prepare_item_craft(uuid, &name, pos, &mut result);
+        if (made || result != shown)
+            && mod_api::__private::listened(mod_api::HookId::PrepareItemCraftResult)
+        {
+            let inputs: Vec<_> = grid.map(|cell| menu.slot(cell).cloned()).collect();
+            self.native_prepare_item_craft_result(uuid, &name, pos, &inputs, &mut result);
+        }
+        let changed = result != shown;
+        if changed {
+            menu.set_hook_result(&self.menu_env(), slot, result);
+        }
+        changed
+    }
+
+    /// Guest `gi`'s stored inventory grid written into their inventory `menu` where the two
+    /// differ (a write outside a click: a command, a mod, a closed screen). The result is then
+    /// made again and the mods have their say before the click runs; a grid that stands keeps
+    /// the result they left. None when the guest's menu could not run.
+    fn lan_sync_inventory_grid(&mut self, gi: usize, menu: &mut Menu) -> Option<()> {
+        let grid = self.lan.as_ref()?.hub.guests[gi].craft_grid.clone();
+        if (0..4).all(|k| menu.slot(1 + k) == grid[k].as_ref()) {
+            return Some(());
+        }
+        self.guest_menu_op(gi, menu, |menu, env| {
+            for (k, s) in grid.into_iter().enumerate() {
+                menu.set_slot(env, 1 + k, s);
+            }
+        })?;
+        self.lan_prepare_craft_result(gi, None, menu, 0, 1..5);
+        Some(())
     }
 
     /// `BundleItem.playInsertSound` and the others on the server: the guest's
@@ -388,17 +448,17 @@ impl Game<'_> {
         if host.hub.guests[gi].spectator() {
             return true;
         }
+        let told = host.hub.guests[gi].menu_sent[0].clone();
         let crafting = host.menus.entry(conn).or_default();
         let mut menu = crafting
             .crafting
             .inventory
             .take()
             .unwrap_or_else(|| Box::new(Menu::new(Kind::Inventory)));
-        let grid = host.hub.guests[gi].craft_grid.clone();
-        let Some(changed) = self.guest_menu_op(gi, &mut menu, |menu, env| {
-            for (k, s) in grid.into_iter().enumerate() {
-                menu.set_slot(env, 1 + k, s);
-            }
+        if self.lan_sync_inventory_grid(gi, &mut menu).is_none() {
+            return true;
+        }
+        let Some(mut changed) = self.guest_menu_op(gi, &mut menu, |menu, env| {
             let before: Vec<_> = (0..menu.slot_count())
                 .map(|s| menu.slot(s).cloned())
                 .collect();
@@ -409,15 +469,12 @@ impl Game<'_> {
         }) else {
             return true;
         };
-        let Some(host) = self.lan.as_ref() else {
-            return true;
-        };
-        let guest = &host.hub.guests[gi];
-        let (uuid, name) = (guest.uuid, guest.name.clone());
-        let mut result = menu.slot(0).cloned();
-        self.native_prepare_item_craft(uuid, &name, None, &mut result);
-        let env = self.menu_env();
-        menu.set_slot(&env, 0, result);
+        self.lan_prepare_craft_result(gi, None, &mut menu, 0, 1..5);
+        // The mods' result need not be the click's doing (the same recipe made again, or the
+        // ask before the click): the client is sent it where it was last told another.
+        if menu.slot(0) != told.as_ref() && !changed.contains(&0) {
+            changed.push(0);
+        }
         let Some(host) = self.lan.as_mut() else {
             return true;
         };
@@ -524,8 +581,8 @@ impl Game<'_> {
         let Some(mut changed) = self.guest_menu_op(gi, &mut menu, |menu, env| {
             if matches!(kind, Kind::Mod(_)) {
                 menu.load_container(env, &items);
-                if let Some((slot, result)) = shown {
-                    menu.set_slot(env, slot, result);
+                if let Some((slot, result, hook)) = shown {
+                    menu.restore_result(env, slot, result, hook);
                 }
             } else {
                 for (k, s) in items.iter().enumerate() {
@@ -983,8 +1040,8 @@ impl Game<'_> {
             menu.sources = sources.into_iter().map(|(_, items)| items).collect();
             load_player(&mut menu, &host.hub.guests[gi]);
             menu.load_container(&env, &items);
-            if let Some((slot, result)) = shown {
-                menu.set_slot(&env, slot, result);
+            if let Some((slot, result, hook)) = shown {
+                menu.restore_result(&env, slot, result, hook);
             }
             menu
         } else if container == 0 {
@@ -1035,13 +1092,9 @@ impl Game<'_> {
                 .inventory
                 .take()
                 .unwrap_or_else(|| Box::new(Menu::new(Kind::Inventory)));
-            let grid = host.hub.guests[gi].craft_grid.clone();
-            let placed = self.guest_menu_op(gi, &mut menu, |menu, env| {
-                for (k, s) in grid.into_iter().enumerate() {
-                    menu.set_slot(env, 1 + k, s);
-                }
-                apply(menu, env)
-            })?;
+            self.lan_sync_inventory_grid(gi, &mut menu)?;
+            let placed = self.guest_menu_op(gi, &mut menu, apply)?;
+            self.lan_prepare_craft_result(gi, None, &mut menu, 0, 1..5);
             let host = self.lan.as_mut()?;
             host.hub.guests.update(gi, |g| {
                 for k in 0..4 {
@@ -1058,6 +1111,7 @@ impl Game<'_> {
                 .get_mut(&conn)
                 .and_then(|play| play.crafting.table.take_if(|(w, ..)| *w == container))?;
             let placed = self.guest_menu_op(gi, &mut menu, apply)?;
+            self.lan_prepare_craft_result(gi, Some(pos), &mut menu, 0, 1..10);
             let host = self.lan.as_mut()?;
             *host.menus.entry(conn).or_default().crafting.table = Some((window, state, menu, pos));
             self.lan_send_table_content(conn);
@@ -1099,12 +1153,7 @@ impl Game<'_> {
                 }
             });
             // The mods have their say on the restored grid's result, as after a click.
-            let guest = &self.lan.as_ref()?.hub.guests[gi];
-            let (uuid, name) = (guest.uuid, guest.name.clone());
-            let mut result = menu.slot(0).cloned();
-            self.native_prepare_item_craft(uuid, &name, Some(pos), &mut result);
-            let env = self.menu_env();
-            menu.set_slot(&env, 0, result);
+            self.lan_prepare_craft_result(gi, Some(pos), &mut menu, 0, 1..10);
         }
         let host = self.lan.as_mut()?;
         *host.menus.entry(conn).or_default().crafting.table = Some((window, 0, menu, pos));
@@ -1160,18 +1209,11 @@ impl Game<'_> {
             }) else {
                 return true;
             };
-            let Some(guest) = self.lan.as_ref().map(|host| &host.hub.guests[gi]) else {
-                return true;
-            };
-            let (uuid, name) = (guest.uuid, guest.name.clone());
-            let mut result = menu.slot(0).cloned();
-            let vanilla = result.clone();
-            self.native_prepare_item_craft(uuid, &name, Some(pos), &mut result);
-            if result != vanilla && !changed.contains(&0) {
+            if self.lan_prepare_craft_result(gi, Some(pos), &mut menu, 0, 1..10)
+                && !changed.contains(&0)
+            {
                 changed.push(0);
             }
-            let env = self.menu_env();
-            menu.set_slot(&env, 0, result);
             let Some(host) = self.lan.as_mut() else {
                 return true;
             };
@@ -1266,8 +1308,8 @@ impl Game<'_> {
         menu.sources = sources.iter().map(|(_, items)| items.clone()).collect();
         let out = self.guest_menu_op(gi, &mut menu, |menu, env| {
             menu.load_container(env, &items);
-            if let Some((slot, result)) = shown {
-                menu.set_slot(env, slot, result);
+            if let Some((slot, result, hook)) = shown {
+                menu.restore_result(env, slot, result, hook);
             }
             apply(menu, env)
         })?;
@@ -1406,12 +1448,12 @@ impl Game<'_> {
         host: &super::lan::LanHost,
         gi: usize,
         items: &[Option<ItemStack>],
-    ) -> Option<(usize, Option<ItemStack>)> {
+    ) -> Option<(usize, Option<ItemStack>, bool)> {
         let menu = host.hub.guests[gi].menu.as_ref()?;
         let c = menu.mod_type?.crafting?;
         let craft = menu.craft.as_ref()?;
         (items.get(c.grid_slots()) == Some(&craft.grid[..]))
-            .then(|| (c.result, craft.result.clone()))
+            .then(|| (c.result, craft.result.clone(), craft.hook))
     }
 
     /// After the menu engine ran on guest `gi`'s mod crafting menu at `pos`:
@@ -1425,19 +1467,13 @@ impl Game<'_> {
         menu: &mut Menu,
     ) -> Option<usize> {
         let c = menu.mod_crafting()?;
-        let guest = &self.lan.as_ref()?.hub.guests[gi];
-        let (uuid, name) = (guest.uuid, guest.name.clone());
-        let mut result = menu.slot(c.result).cloned();
-        let vanilla = result.clone();
-        self.native_prepare_item_craft(uuid, &name, Some([pos.0, pos.1, pos.2]), &mut result);
+        let at = Some([pos.0, pos.1, pos.2]);
+        let changed = self.lan_prepare_craft_result(gi, at, menu, c.result, c.grid_slots());
+        let (result, hook) = (menu.slot(c.result).cloned(), menu.result_is_hooks());
         let grid = c.grid_slots().map(|k| menu.slot(k).cloned()).collect();
-        let changed = result != vanilla;
-        if changed {
-            menu.set_slot(&self.menu_env(), c.result, result.clone());
-        }
         self.lan.as_mut()?.hub.guests.update(gi, |guest| {
             if let Some(m) = guest.menu.as_mut() {
-                m.craft = Some(ModCraft { grid, result });
+                m.craft = Some(ModCraft { grid, result, hook });
             }
         });
         changed.then_some(c.result)

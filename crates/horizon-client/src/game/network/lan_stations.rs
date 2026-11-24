@@ -201,6 +201,10 @@ impl Game<'_> {
                 .unwrap_or((0, String::new()));
             let mut result = menu.slot(3).cloned();
             self.native_prepare_smithing(uuid, &name, pos, &mut result);
+            if mod_api::__private::listened(mod_api::HookId::PrepareSmithingResult) {
+                let inputs: Vec<_> = (0..3).map(|slot| menu.slot(slot).cloned()).collect();
+                self.native_prepare_smithing_result(uuid, &name, pos, &inputs, &mut result);
+            }
             let env = self.menu_env();
             menu.set_slot(&env, 3, result);
         }

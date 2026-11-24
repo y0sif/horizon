@@ -2,7 +2,8 @@
 use super::*;
 impl Menu {
     pub(super) fn crafting_result_is_current(&self, env: &Env, slot: usize) -> bool {
-        if !env.recipes.has_mod_crafting() {
+        // A result the mods set for this grid is current until the grid makes another.
+        if !env.recipes.has_mod_crafting() || self.state.hook_result {
             return true;
         }
         env.recipes

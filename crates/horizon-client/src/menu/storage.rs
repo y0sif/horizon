@@ -161,6 +161,12 @@ pub struct State {
     pub item_smithed: Vec<([Option<ItemStack>; 3], ItemStack)>,
     /// `FurnaceResultSlot.removeCount`.
     pub(super) output_removed: u32,
+    /// The crafting result was made again from the grid (`recompute`) since a server caller
+    /// last asked the mods about it (`take_result_made`).
+    pub(super) result_made: bool,
+    /// The crafting result shown is the mods' (`set_hook_result`), not the recipe's; the next
+    /// `recompute` ends that.
+    pub(super) hook_result: bool,
     /// `LivingEntity.onEquipItem` calls that change the item: the
     /// `EquipmentSlot` name and the new stack, in order, for the caller.
     pub equipped: Vec<(&'static str, Option<ItemStack>)>,

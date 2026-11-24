@@ -191,17 +191,23 @@ impl Game<'_> {
             })
             .map_err(refusal)?
         };
+        let mut hook = false;
         if let Some(crafting) = menu.mod_crafting() {
-            let mut result = menu.slot(crafting.result).cloned();
-            self.native_prepare_item_craft(
-                before.uuid,
-                &name,
-                Some([pos.0, pos.1, pos.2]),
-                &mut result,
-            );
+            let at = Some([pos.0, pos.1, pos.2]);
+            let recipe = menu.slot(crafting.result).cloned();
+            let mut result = recipe.clone();
+            self.native_prepare_item_craft(before.uuid, &name, at, &mut result);
+            if mod_api::__private::listened(mod_api::HookId::PrepareItemCraftResult) {
+                let inputs: Vec<_> = crafting
+                    .grid_slots()
+                    .map(|slot| menu.slot(slot).cloned())
+                    .collect();
+                self.native_prepare_item_craft_result(before.uuid, &name, at, &inputs, &mut result);
+            }
             if !self.mod_book_placement_context(before, selection) || !graph.unchanged(self) {
                 return Err(R::Changed);
             }
+            hook = result != recipe;
             menu.load_slot(crafting.result, result);
         }
         if !self.native_as_player(before.uuid, |game| game.journal_player(before.uuid)) {
@@ -238,6 +244,7 @@ impl Game<'_> {
                 .map(|slot| menu.slot(slot).cloned())
                 .collect(),
             result: menu.slot(crafting.result).cloned(),
+            hook,
         });
         let host = self.lan.as_mut().ok_or(R::Changed)?;
         let gi = host

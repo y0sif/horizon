@@ -97,6 +97,9 @@ pub struct Menu {
 pub struct ModCraft {
     pub grid: Vec<Option<ItemStack>>,
     pub result: Option<ItemStack>,
+    /// The result is the mods' (`prepare_item_craft`, `prepare_item_craft_result`), not the
+    /// recipe's.
+    pub hook: bool,
 }
 
 /// Dispatch a mod menu type's `stillValid` answer for a player's block
@@ -2036,6 +2039,7 @@ pub(crate) mod tests {
             m.craft = Some(ModCraft {
                 grid: Vec::new(),
                 result: planks.clone(),
+                hook: false,
             });
         }
         assert_eq!(slots.get(&world, &g, 0), planks);
